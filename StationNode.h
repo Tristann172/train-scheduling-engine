@@ -13,7 +13,7 @@ private:
 
 public:
     StationNode(int id, const std::string& stName, double km, int tracks)
-        : stationID(id), name(stName), kmMarker(km), numberOfTracks(tracks), nextStation(nullptr) {}
+        : stationID(id), name(stName), kmMarker(km), numberOfTracks(tracks), nextStation(NULL) {}
 
     // Getters & Setters
     int getStationID() const { return stationID; }

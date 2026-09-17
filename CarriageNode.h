@@ -12,7 +12,7 @@ private:
 
 public:
     CarriageNode(int cNo, const std::string& cType, int seats)
-        : carriageNo(cNo), type(cType), totalSeats(seats), nextCarriage(nullptr) {}
+        : carriageNo(cNo), type(cType), totalSeats(seats), nextCarriage(NULL) {}
 
     int getCarriageNo() const { return carriageNo; }
     std::string getType() const { return type; }

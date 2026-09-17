@@ -11,7 +11,7 @@ private:
 
 public:
     StopScheduleNode(int stID, int arr, int dep, int track)
-        : stationID(stID), arrivalMinute(arr), departureMinute(dep), trackUsed(track), nextStop(nullptr) {}
+        : stationID(stID), arrivalMinute(arr), departureMinute(dep), trackUsed(track), nextStop(NULL) {}
 
     int getStationID() const { return stationID; }
     int getArrivalMinute() const { return arrivalMinute; }

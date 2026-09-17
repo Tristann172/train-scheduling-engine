@@ -12,7 +12,7 @@ using namespace std;
 class FileManager {
 public:
     static void loadStations(const string& filename, StationList& stationList) {
-        ifstream file(filename);
+        ifstream file(filename.c_str());
         if (!file.is_open()) return;
 
         string line;

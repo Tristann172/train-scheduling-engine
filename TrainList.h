@@ -12,13 +12,13 @@ private:
     TrainNode* head;
 
 public:
-    TrainList() : head(nullptr) {}
+    TrainList() : head(NULL) {}
 
     ~TrainList() {
-        while (head != nullptr) {
+        while (head != NULL) {
             TrainNode* temp = head;
             head = head->getNextTrain();
-            delete temp; // TrainNode destructor se tu dong delete headCarriage & headSchedule
+            delete temp; 
         }
     }
 
@@ -26,12 +26,12 @@ public:
 
     void addTrain(const string& code, int direction) {
         TrainNode* newNode = new TrainNode(code, direction);
-        if (head == nullptr) {
+        if (head == NULL) {
             head = newNode;
             return;
         }
         TrainNode* temp = head;
-        while (temp->getNextTrain() != nullptr) {
+        while (temp->getNextTrain() != NULL) {
             temp = temp->getNextTrain();
         }
         temp->setNextTrain(newNode);
@@ -39,11 +39,11 @@ public:
 
     TrainNode* findTrainByCode(const string& code) const {
         TrainNode* temp = head;
-        while (temp != nullptr) {
+        while (temp != NULL) {
             if (temp->getTrainCode() == code) return temp;
             temp = temp->getNextTrain();
         }
-        return nullptr;
+        return NULL;
     }
 
     void addCarriageToTrain(const string& code, int cNo, const string& type, int seats) {
@@ -51,12 +51,12 @@ public:
         if (!train) return;
 
         CarriageNode* newCarriage = new CarriageNode(cNo, type, seats);
-        if (train->getHeadCarriage() == nullptr) {
+        if (train->getHeadCarriage() == NULL) {
             train->setHeadCarriage(newCarriage);
             return;
         }
         CarriageNode* temp = train->getHeadCarriage();
-        while (temp->getNextCarriage() != nullptr) {
+        while (temp->getNextCarriage() != NULL) {
             temp = temp->getNextCarriage();
         }
         temp->setNextCarriage(newCarriage);
@@ -67,12 +67,12 @@ public:
         if (!train) return;
 
         StopScheduleNode* newStop = new StopScheduleNode(stID, arr, dep, track);
-        if (train->getHeadSchedule() == nullptr) {
+        if (train->getHeadSchedule() == NULL) {
             train->setHeadSchedule(newStop);
             return;
         }
         StopScheduleNode* temp = train->getHeadSchedule();
-        while (temp->getNextStop() != nullptr) {
+        while (temp->getNextStop() != NULL) {
             temp = temp->getNextStop();
         }
         temp->setNextStop(newStop);

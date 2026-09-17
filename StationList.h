@@ -1,48 +1,60 @@
+#ifndef STATION_LIST_H
+#define STATION_LIST_H
+
 #include <iostream>
-#include "StationList.h"
-#include "TrainList.h"
-#include "FileManager.h"
+#include <string>
+#include "StationNode.h"
 
-void showMenu() {
-    std::cout << "\n============================================\n";
-    std::cout << " HE THONG QUAN LY LICH TRINH TAU HOA (PBL2) \n";
-    std::cout << "============================================\n";
-    std::cout << "1. Xem danh sach cac ga\n";
-    std::cout << "2. Tra cuu thong tin chuyen tau\n";
-    std::cout << "0. Thoat chuong trinh\n";
-    std::cout << "Lua chon cua ban: ";
-}
+class StationList {
+private:
+    StationNode* head;
 
-int main() {
-    StationList stationList;
-    TrainList trainList;
+public:
+    StationList() : head(NULL) {}
 
-    // Nap du lieu tu file khi khoi dong
-    FileManager::loadStations("stations.txt", stationList);
-    FileManager::loadTrains("trains.txt", trainList);
-
-    int choice = -1;
-    while (choice != 0) {
-        showMenu();
-        std::cin >> choice;
-
-        if (choice == 1) {
-            stationList.displayAll();
-        } 
-        else if (choice == 2) {
-            std::string code;
-            std::cout << "Nhap ma hieu tau (vi du: SE1): ";
-            std::cin >> code;
-            TrainNode* train = trainList.findTrainByCode(code);
-            if (train) {
-                std::cout << "\n-> Tim thay tau " << train->getTrainCode() 
-                          << " (Huong: " << (train->getDirection() == 1 ? "Nam" : "Bac") << ")\n";
-            } else {
-                std::cout << "\n-> Khong tim thay tau!\n";
-            }
+    ~StationList() {
+        while (head != NULL) {
+            StationNode* temp = head;
+            head = head->getNextStation();
+            delete temp;
         }
     }
 
-    std::cout << "Da thoat chuong trinh an toan.\n";
-    return 0;
-}
+    StationNode* getHead() const { return head; }
+
+    void addStation(int id, const std::string& name, double km, int tracks) {
+        StationNode* newNode = new StationNode(id, name, km, tracks);
+        if (head == NULL) {
+            head = newNode;
+            return;
+        }
+        StationNode* temp = head;
+        while (temp->getNextStation() != NULL) {
+            temp = temp->getNextStation();
+        }
+        temp->setNextStation(newNode);
+    }
+
+    StationNode* findStationByID(int id) const {
+        StationNode* temp = head;
+        while (temp != NULL) {
+            if (temp->getStationID() == id) return temp;
+            temp = temp->getNextStation();
+        }
+        return NULL;
+    }
+
+    void displayAll() const {
+        std::cout << "\n=== DANH SACH CAC GA TREN TUYEN ===\n";
+        StationNode* temp = head;
+        while (temp != NULL) {
+            std::cout << "ID: " << temp->getStationID() 
+                      << " | Ten: " << temp->getName() 
+                      << " | Km: " << temp->getKmMarker() 
+                      << " | So ray phu: " << temp->getNumberOfTracks() << "\n";
+            temp = temp->getNextStation();
+        }
+    }
+};
+
+#endif

@@ -1,5 +1,4 @@
-#ifndef STATION_NODE_H
-#define STATION_NODE_H
+#pragma once
 
 #include <string>
 
@@ -24,5 +23,3 @@ public:
 
     void setNextStation(StationNode* next) { nextStation = next; }
 };
-
-#endif

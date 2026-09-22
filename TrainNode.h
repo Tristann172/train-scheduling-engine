@@ -1,5 +1,4 @@
-#ifndef TRAIN_NODE_H
-#define TRAIN_NODE_H
+#pragma once
 
 #include <string>
 #include "CarriageNode.h"
@@ -40,5 +39,3 @@ public:
     void setHeadSchedule(StopScheduleNode* head) { headSchedule = head; }
     void setNextTrain(TrainNode* next) { nextTrain = next; }
 };
-
-#endif

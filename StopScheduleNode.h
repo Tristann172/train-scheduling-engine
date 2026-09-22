@@ -1,5 +1,4 @@
-#ifndef STOP_SCHEDULE_NODE_H
-#define STOP_SCHEDULE_NODE_H
+#pragma once
 
 class StopScheduleNode {
 private:
@@ -24,5 +23,3 @@ public:
     void setTrackUsed(int track) { trackUsed = track; }
     void setNextStop(StopScheduleNode* next) { nextStop = next; }
 };
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef FILE_MANAGER_H
-#define FILE_MANAGER_H
+#pragma once
 
 #include <fstream>
 #include <sstream>
@@ -70,5 +69,3 @@ public:
         file.close();
     }
 };
-
-#endif

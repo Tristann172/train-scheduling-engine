@@ -1,5 +1,4 @@
-#ifndef TRAIN_LIST_H
-#define TRAIN_LIST_H
+#pragma once
 
 #include <iostream>
 #include <string>
@@ -78,5 +77,3 @@ public:
         temp->setNextStop(newStop);
     }
 };
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef STATION_LIST_H
-#define STATION_LIST_H
+#pragma once
 
 #include <iostream>
 #include <string>
@@ -56,5 +55,3 @@ public:
         }
     }
 };
-
-#endif

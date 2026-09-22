@@ -1,5 +1,4 @@
-#ifndef TICKET_NODE_H
-#define TICKET_NODE_H
+#pragma once
 
 #include <string>
 
@@ -28,5 +27,3 @@ public:
 
     void setNextTicket(TicketNode* next) { nextTicket = next; }
 };
-
-#endif

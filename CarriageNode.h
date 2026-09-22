@@ -1,5 +1,4 @@
-#ifndef CARRIAGE_NODE_H
-#define CARRIAGE_NODE_H
+#pragma once
 
 #include <string>
 
@@ -21,5 +20,3 @@ public:
 
     void setNextCarriage(CarriageNode* next) { nextCarriage = next; }
 };
-
-#endif

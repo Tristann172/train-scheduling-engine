@@ -13,6 +13,7 @@ private:
 public:
     TrainList();
     ~TrainList();
+    void clear(); // Thêm hàm dọn bộ nhớ
     
     TrainNode* getHead() const;
     void addTrain(const std::string& code, int direction);
@@ -21,4 +22,4 @@ public:
     void addStopScheduleToTrain(const std::string& code, int stID, int arr, int dep, int track);
 
     void resolveConflictAndScheduleSiding(StationList* stationList);
-}; 
+};

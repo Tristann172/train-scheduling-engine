@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include "TicketNode.h"
+#include "TrainList.h"
 
 class StationList; 
 class StationNode;

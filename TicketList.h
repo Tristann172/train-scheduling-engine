@@ -16,13 +16,10 @@ public:
     void clear();
 
     TicketNode* getHead() const;
-
-    // Thêm vé mới (Cấp phát động)
-    void addTicket(const std::string& ticketID, const std::string& trainCode,
-                   int carriageNo, int seatNo, int fromID, int toID);
-
-    // Nghiệp vụ cốt lõi Tuần 5: Thuật toán kiểm tra khả dụng ghế theo chặng
-    // Bắt buộc truyền tham số dạng con trỏ StationList*
-    bool isSeatAvailable(StationList* stationList, const std::string& trainCode,
-                         int carriageNo, int seatNo, int newFromID, int newToID) const;
+    void addTicket(const std::string& ticketID, const std::string& trainCode, int carriageNo, int seatNo, int fromID, int toID);
+    bool cancelTicket(const std::string& ticketID);
+    void displayAllTickets() const; 
+    bool isSeatAvailable(StationList* stationList, const std::string& trainCode, int carriageNo, int seatNo, int newFromID, int newToID) const;
+    void displaySeatMap(StationList* stationList, const std::string& trainCode, int carriageNo, int totalSeats, int fromID, int toID) const;
+    void bookTicketUI(StationList* stationList, TrainList* trainList);
 };

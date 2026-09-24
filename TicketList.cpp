@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <iostream>
 
+using namespace std;
+
 TicketList::TicketList() : head(nullptr) {}
 
 void TicketList::clear() {

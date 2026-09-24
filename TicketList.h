@@ -17,6 +17,7 @@ public:
 
     TicketNode* getHead() const;
     void addTicket(const std::string& ticketID, const std::string& trainCode, int carriageNo, int seatNo, int fromID, int toID);
+    TicketNode* findTicketByID(const std::string& ticketID) const;
     bool cancelTicket(const std::string& ticketID);
     void displayAllTickets() const; 
     bool isSeatAvailable(StationList* stationList, const std::string& trainCode, int carriageNo, int seatNo, int newFromID, int newToID) const;

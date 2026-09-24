@@ -5,7 +5,7 @@
 #include "StationNode.h"
 
 using namespace std;
-
+ 
 void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
     if (head == NULL || stationList == NULL) return;
 

@@ -21,4 +21,4 @@ public:
     void addStopScheduleToTrain(const std::string& code, int stID, int arr, int dep, int track);
 
     void resolveConflictAndScheduleSiding(StationList* stationList);
-};
+}; 

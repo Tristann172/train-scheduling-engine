@@ -5,65 +5,103 @@
 #include <string>
 #include "StationList.h"
 #include "TrainList.h"
-
-using namespace std;
+#include "TicketList.h"
 
 class FileManager {
 public:
-    static void loadStations(const string& filename, StationList& stationList) {
-        ifstream file(filename.c_str());
+    static void loadStations(const std::string& filename, StationList& stationList) {
+        std::ifstream file(filename.c_str());
         if (!file.is_open()) return;
 
-        string line;
-        while (getline(file, line)) {
+        std::string line;
+        while (std::getline(file, line)) {
             if (line.empty()) continue;
-            stringstream ss(line);
-            string idStr, name, kmStr, tracksStr;
+            std::stringstream ss(line);
+            std::string idStr, name, kmStr, tracksStr;
 
-            if (getline(ss, idStr, '|') &&
-                getline(ss, name, '|') &&
-                getline(ss, kmStr, '|') &&
-                getline(ss, tracksStr, '|')) {
-                stationList.addStation(stoi(idStr), name, stod(kmStr), stoi(tracksStr));
+            if (std::getline(ss, idStr, '|') &&
+                std::getline(ss, name, '|') &&
+                std::getline(ss, kmStr, '|') &&
+                std::getline(ss, tracksStr, '|')) {
+                stationList.addStation(std::stoi(idStr), name, std::stod(kmStr), std::stoi(tracksStr));
             }
         }
         file.close();
     }
 
-    static void loadTrains(const string& filename, TrainList& trainList) {
-        ifstream file(filename);
+    static void loadTrains(const std::string& filename, TrainList& trainList) {
+        std::ifstream file(filename.c_str());
         if (!file.is_open()) return;
 
-        string line;
-        string currentTrainCode = "";
+        std::string line;
+        std::string currentTrainCode = "";
 
-        while (getline(file, line)) {
+        while (std::getline(file, line)) {
             if (line.empty()) continue;
-            stringstream ss(line);
-            string type;
-            getline(ss, type, '|');
+            std::stringstream ss(line);
+            std::string type;
+            std::getline(ss, type, '|');
 
             if (type == "TRAIN") {
-                string code, dirStr;
-                getline(ss, code, '|');
-                getline(ss, dirStr, '|');
+                std::string code, dirStr;
+                std::getline(ss, code, '|');
+                std::getline(ss, dirStr, '|');
                 currentTrainCode = code;
-                trainList.addTrain(code, stoi(dirStr));
+                trainList.addTrain(code, std::stoi(dirStr));
             } 
             else if (type == "CARRIAGE" && !currentTrainCode.empty()) {
-                string cNoStr, cType, seatsStr;
-                getline(ss, cNoStr, '|');
-                getline(ss, cType, '|');
-                getline(ss, seatsStr, '|');
-                trainList.addCarriageToTrain(currentTrainCode, stoi(cNoStr), cType, stoi(seatsStr));
+                std::string cNoStr, cType, seatsStr;
+                std::getline(ss, cNoStr, '|');
+                std::getline(ss, cType, '|');
+                std::getline(ss, seatsStr, '|');
+                trainList.addCarriageToTrain(currentTrainCode, std::stoi(cNoStr), cType, std::stoi(seatsStr));
             } 
             else if (type == "STOP" && !currentTrainCode.empty()) {
-                string stIDStr, arrStr, depStr, trackStr;
-                getline(ss, stIDStr, '|');
-                getline(ss, arrStr, '|');
-                getline(ss, depStr, '|');
-                getline(ss, trackStr, '|');
-                trainList.addStopScheduleToTrain(currentTrainCode, stoi(stIDStr), stoi(arrStr), stoi(depStr), stoi(trackStr));
+                std::string stIDStr, arrStr, depStr, trackStr;
+                std::getline(ss, stIDStr, '|');
+                std::getline(ss, arrStr, '|');
+                std::getline(ss, depStr, '|');
+                std::getline(ss, trackStr, '|');
+                trainList.addStopScheduleToTrain(currentTrainCode, std::stoi(stIDStr), std::stoi(arrStr), std::stoi(depStr), std::stoi(trackStr));
+            }
+        }
+        file.close();
+    }
+
+    static void saveTickets(const std::string& filename, const TicketList& ticketList) {
+        std::ofstream file(filename.c_str());
+        if (!file.is_open()) return;
+
+        TicketNode* curr = ticketList.getHead();
+        while (curr != nullptr) {
+            file << curr->getTicketID() << "|"
+                 << curr->getTrainCode() << "|"
+                 << curr->getCarriageNo() << "|"
+                 << curr->getSeatNo() << "|"
+                 << curr->getFromStationID() << "|"
+                 << curr->getToStationID() << "\n";
+            curr = curr->getNextTicket();
+        }
+        file.close();
+    }
+
+    static void loadTickets(const std::string& filename, TicketList& ticketList) {
+        std::ifstream file(filename.c_str());
+        if (!file.is_open()) return;
+
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+            std::stringstream ss(line);
+            std::string tID, code, cNoStr, sNoStr, fromStr, toStr;
+
+            if (std::getline(ss, tID, '|') &&
+                std::getline(ss, code, '|') &&
+                std::getline(ss, cNoStr, '|') &&
+                std::getline(ss, sNoStr, '|') &&
+                std::getline(ss, fromStr, '|') &&
+                std::getline(ss, toStr, '|')) {
+                ticketList.addTicket(tID, code, std::stoi(cNoStr), std::stoi(sNoStr), std::stoi(fromStr), std::stoi(toStr));
             }
         }
         file.close();

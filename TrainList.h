@@ -4,18 +4,21 @@
 #include <string>
 #include "TrainNode.h"
 
-using namespace std;
+class StationList;
 
 class TrainList {
 private:
     TrainNode* head;
 
 public:
-    TrainList() : head(NULL) {}
+    TrainList();
     ~TrainList();
-    TrainNode* getHead() const { return head; }
-    void addTrain(const string& code, int direction);
-    TrainNode* findTrainByCode(const string& code) const;
-    void addCarriageToTrain(const string& code, int cNo, const string& type, int seats);
-    void addStopScheduleToTrain(const string& code, int stID, int arr, int dep, int track);
-};
+    
+    TrainNode* getHead() const;
+    void addTrain(const std::string& code, int direction);
+    TrainNode* findTrainByCode(const std::string& code) const;
+    void addCarriageToTrain(const std::string& code, int cNo, const std::string& type, int seats);
+    void addStopScheduleToTrain(const std::string& code, int stID, int arr, int dep, int track);
+
+    void resolveConflictAndScheduleSiding(StationList* stationList);
+}; 

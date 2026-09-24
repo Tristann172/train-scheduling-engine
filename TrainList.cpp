@@ -4,6 +4,54 @@
 
 using namespace std;
 
+void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
+    if (head == NULL || stationList == NULL) return;
+
+    TrainNode* trainA = head;
+    
+    while (trainA != NULL) {
+        TrainNode* trainB = trainA->getNextTrain();
+        
+        while (trainB != NULL) {
+            if (trainA->getDirection() != trainB->getDirection()) {
+                
+                StopScheduleNode* schedA = trainA->getHeadSchedule();
+                while (schedA != NULL && schedA->getNextStop() != NULL) {
+                    
+                    StopScheduleNode* schedB = trainB->getHeadSchedule();
+                    while (schedB != NULL && schedB->getNextStop() != NULL) {
+                        
+                        if (schedA->getStationID() == schedB->getNextStop()->getStationID() &&
+                            schedA->getNextStop()->getStationID() == schedB->getStationID()) {
+                            
+                            int depA = schedA->getDepartureMinute();
+                            int arrA = schedA->getNextStop()->getArrivalMinute();
+                            int depB = schedB->getDepartureMinute();
+                            int arrB = schedB->getNextStop()->getArrivalMinute();
+                            
+                            int maxDep = (depA > depB) ? depA : depB;
+                            int minArr = (arrA < arrB) ? arrA : arrB;
+                            
+                            if (maxDep < minArr) {
+                                StationNode* stA = stationList->findStationByID(schedA->getStationID());
+                                
+                                if (stA != NULL && stA->getNumberOfTracks() > 1) {
+                                    schedA->setTrackUsed(2);
+                                    schedA->setDepartureMinute(arrB + 5); 
+                                }
+                            }
+                        }
+                        schedB = schedB->getNextStop();
+                    }
+                    schedA = schedA->getNextStop();
+                }
+            }
+            trainB = trainB->getNextTrain();
+        }
+        trainA = trainA->getNextTrain();
+    }
+}
+
 TrainList::~TrainList() {
     while (head != NULL) {
         TrainNode *temp = head;

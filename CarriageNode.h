@@ -5,7 +5,7 @@
 class CarriageNode {
 private:
     int carriageNo;
-    std::string type; // "Ngoi", "Giuong"
+    std::string type;
     int totalSeats;
     CarriageNode* nextCarriage;
 

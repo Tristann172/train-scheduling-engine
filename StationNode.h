@@ -8,13 +8,11 @@ private:
     std::string name;
     double kmMarker;
     int numberOfTracks;
-    StationNode* nextStation; // Con tr? tr? d?n node Ga ti?p theo
+    StationNode* nextStation;
 
 public:
     StationNode(int id, const std::string& stName, double km, int tracks)
         : stationID(id), name(stName), kmMarker(km), numberOfTracks(tracks), nextStation(NULL) {}
-
-    // Getters & Setters
     int getStationID() const { return stationID; }
     std::string getName() const { return name; }
     double getKmMarker() const { return kmMarker; }

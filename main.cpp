@@ -1,15 +1,18 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
-#include "StationNode.h"
-#include "CarriageNode.h"
-#include "StopScheduleNode.h"
-#include "TrainNode.h"
-#include "TicketNode.h"
+
 #include "StationList.h"
 #include "TrainList.h"
-#include "TicketList.h" // [THÊM MỚI] Include thư viện quản lý vé
+#include "TicketList.h"
+
 #include "FileManager.h"
+
+
+#include "StationNode.h"
+#include "TrainNode.h"
+#include "CarriageNode.h"
+#include "StopScheduleNode.h"
 
 using namespace std;
 
@@ -27,18 +30,18 @@ void displayMenu() {
     cout << " 5. Tra cuu chi tiet tau (Toa xe & Lich dung do)      \n";
     cout << " 6. Them chuyen tau moi                                \n";
     cout << "-------------------------------------------------------\n";
-    // [THÊM MỚI] Nhóm Menu Nghiệp vụ Bán vé (Tuần 5-6)
-    cout << " [ NGHIỆP VỤ BÁN VÉ CHẶNG ]                            \n";
-    cout << " 8. Dat ve tau (Giao dien UI)                          \n";
-    cout << " 9. Hien thi danh sach ve da ban                       \n";
-    cout << " 10. Huy ve tau                                        \n";
+    cout << " [ NGHIEP VU VE & CHANG ]                              \n";
+    cout << " 7. Tra cuu so do ghe & Dat ve phan doan chang         \n";
+    cout << " 8. Hien thi danh sach tat ca ve da dat                \n";
+    cout << " 9. Huy ve va cap nhat tra lai ghe trong               \n";
     cout << "-------------------------------------------------------\n";
     cout << " [ HE THONG & DU LIEU ]                                \n";
-    cout << " 7. Tai lai (Reload) du lieu tu file text              \n";
+    cout << " 10. Tai lai (Reload) du lieu tu file text             \n";
     cout << " 0. Thoat chuong trinh                                 \n";
     cout << "=======================================================\n";
     cout << "Nhap lua chon cua ban: ";
 }
+
 
 void displayTrainDetails(TrainNode* train) {
     if (!train) return;
@@ -67,25 +70,22 @@ void displayTrainDetails(TrainNode* train) {
     while (stop != nullptr) {
         cout << "      - Ga ID: " << stop->getStationID() 
              << " | Gio den: " << stop->getArrivalMinute() << "' "
-             << "| Gio di: " << stop->getDepartureMinute() << "' "
+             << "| Gio đi: " << stop->getDepartureMinute() << "' "
              << "| Ray dung: " << stop->getTrackUsed() << "\n";
         stop = stop->getNextStop();
     }
 }
 
 int main() {
-    // 1. Cấp phát Danh sách liên kết trên vùng nhớ Stack của hàm main 
-    // (Các Node bên trong sẽ được cấp phát động trên Heap)
     StationList stationList;
     TrainList trainList;
-    TicketList ticketList; // [THÊM MỚI] Khởi tạo danh sách vé
+    TicketList ticketList;
 
     cout << "--> Dang khoi tao va nap du lieu tu file text...\n";
 
-    // 2. Load File (Cần đảm bảo file .txt đã có sẵn hoặc chương trình tự tạo)
     FileManager::loadStations("stations.txt", stationList);
     FileManager::loadTrains("trains.txt", trainList);
-    FileManager::loadTickets("tickets.txt", ticketList); // [THÊM MỚI] Đọc vé
+    FileManager::loadTickets("tickets.txt", ticketList);
 
     cout << "--> Nap du lieu thanh cong!\n";
 
@@ -119,8 +119,8 @@ int main() {
             cout << "Nhap so luong ray phu (duong tranh): "; cin >> tracks;
 
             stationList.addStation(id, name, km, tracks);
-            cout << "-> Da them ga " << name << " thanh cong!\n";
-            // Lưu lại file sau khi thêm (Tùy chọn)
+            FileManager::saveStations("stations.txt", stationList);
+            cout << "-> Da them ga " << name << " va luu file thanh cong!\n";
             break;
         }
 
@@ -147,7 +147,7 @@ int main() {
             }
             while (temp != nullptr) {
                 cout << "- Ma tau: " << temp->getTrainCode() 
-                     << " | Huong: " << (temp->getDirection() == 1 ? "Nam" : "Bac") << "\n";
+                     << " | Huong: " << (temp->getDirection() == 1 ? "Nam (Di vao)" : "Bac (Di ra)") << "\n";
                 temp = temp->getNextTrain();
             }
             break;
@@ -174,13 +174,38 @@ int main() {
             cout << "Nhap huong (1: Nam, 0: Bac): "; cin >> dir;
 
             trainList.addTrain(code, dir);
-            cout << "-> Da them tau " << code << " thanh cong!\n";
+            FileManager::saveTrains("trains.txt", trainList);
+            cout << "-> Da them tau " << code << " va luu file thanh cong!\n";
             break;
         }
 
         case 7: {
+            ticketList.bookTicketUI(&stationList, &trainList);
+            break;
+        }
+
+        case 8: {
+            ticketList.displayAllTickets();
+            break;
+        }
+
+        case 9: {
+            string tID;
+            cout << "\n--- HUY VE THONG TIN DAT CHO ---\n";
+            cout << "Nhap ma ve can huy (vi du: TCK001): ";
+            cin >> tID;
+
+            if (ticketList.cancelTicket(tID)) {
+                FileManager::saveTickets("tickets.txt", ticketList);
+                cout << "-> Huy ve " << tID << " thanh cong va da tra lai ghe trong!\n";
+            } else {
+                cout << "-> [Loi] Khong tim thay ma ve " << tID << " trong he thong!\n";
+            }
+            break;
+        }
+
+        case 10: {
             cout << "\nDang tai lai du lieu tu file text...\n";
-            stationList.clear(); trainList.clear(); ticketList.clear(); // Xóa sạch bộ nhớ cũ trước khi tải lại
             FileManager::loadStations("stations.txt", stationList);
             FileManager::loadTrains("trains.txt", trainList);
             FileManager::loadTickets("tickets.txt", ticketList);
@@ -188,34 +213,8 @@ int main() {
             break;
         }
 
-        // ================= [THÊM MỚI] NGHIỆP VỤ BÁN VÉ ================= 
-        case 8: {
-            // Truyền địa chỉ (con trỏ) của stationList và trainList vào để đối chiếu dữ liệu
-            ticketList.bookTicketUI(&stationList, &trainList);
-            break;
-        }
-
-        case 9: {
-            ticketList.displayAllTickets();
-            break;
-        }
-
-        case 10: {
-            string tID;
-            cout << "\nNhap Ma ve can huy: ";
-            cin >> tID;
-            if (ticketList.cancelTicket(tID)) {
-                FileManager::saveTickets("tickets.txt", ticketList); // Cập nhật lại file
-                cout << "-> [Thanh cong] Da huy ve " << tID << " va thu hoi ghe!\n";
-            } else {
-                cout << "-> [That bai] Khong tim thay ve ma " << tID << " trong he thong!\n";
-            }
-            break;
-        }
-        // ===============================================================
-
         case 0: {
-            cout << "\n[!] Dang thoat, cac Ham Huy (Destructor) se tu dong thu hoi bo nho Heap...\n";
+            cout << "\n[!] Dang thoat chuong trinh va thu hoi bo nho Heap...\n";
             break;
         }
 
@@ -225,6 +224,10 @@ int main() {
         }
     }
 
-    cout << "Chuong trinh da thoat an toan. Zero Memory Leaks!\n";
-    return 0; // Khi kết thúc scope, stationList, trainList, ticketList tự động gọi Destructor để delete toàn bộ Node
+    FileManager::saveStations("stations.txt", stationList);
+    FileManager::saveTrains("trains.txt", trainList);
+    FileManager::saveTickets("tickets.txt", ticketList);
+
+    cout << "Chuong trinh da thoat an toan (Zero Leaks).\n";
+    return 0;
 }

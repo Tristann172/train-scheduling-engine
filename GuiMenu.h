@@ -8,11 +8,11 @@ class StationList;
 class TrainList;
 class TicketList;
 
-// Cấu trúc đại diện cho một Nút bấm (Button) trong Menu
+// Cấu trúc Nút bấm tương tác bằng chuột (Clickable Button)
 struct GuiButton {
     sf::RectangleShape shape;
     sf::Text text;
-    int actionID; // ID tương ứng với từng chức năng
+    int actionID;
     bool isHovered;
 
     GuiButton(float x, float y, float width, float height, const std::string& label, sf::Font& font, int id) 
@@ -26,7 +26,7 @@ struct GuiButton {
 
         text.setFont(font);
         text.setString(label);
-        text.setCharacterSize(16);
+        text.setCharacterSize(15);
         text.setFillColor(sf::Color::White);
         
         // Căn giữa chữ trong nút bấm
@@ -37,11 +37,12 @@ struct GuiButton {
         );
     }
 
+    // Hiệu ứng rê chuột (Hover Effect)
     void updateHover(const sf::Vector2i& mousePos) {
         if (shape.getGlobalBounds().contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
             isHovered = true;
-            shape.setFillColor(sf::Color(52, 152, 219)); // Đổi màu sáng hơn khi Rê chuột vào
-            shape.setOutlineColor(sf::Color(241, 196, 15)); // Viền màu vàng
+            shape.setFillColor(sf::Color(52, 152, 219)); // Đổi màu sáng khi di chuột đè lên
+            shape.setOutlineColor(sf::Color(241, 196, 15)); // Viền màu vàng nổi bật
         } else {
             isHovered = false;
             shape.setFillColor(sf::Color(41, 128, 185));
@@ -49,7 +50,8 @@ struct GuiButton {
         }
     }
 
-    bool isClicked(const sf::Vector2i& mousePos, bool mousePressed) {
+    // Kiểm tra sự kiện nhấp chuột trái
+    bool isClicked(const sf::Vector2i& mousePos, bool mousePressed) const {
         return isHovered && mousePressed;
     }
 
@@ -61,6 +63,6 @@ struct GuiButton {
 
 class GuiMenu {
 public:
-    // Khởi chạy cửa sổ Menu GUI tương tác
+    // Mở trực tiếp Cửa sổ GUI Dashboard tương tác
     static void runGUIMenu(StationList& stationList, TrainList& trainList, TicketList& ticketList);
 };

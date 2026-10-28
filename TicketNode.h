@@ -1,5 +1,4 @@
 #pragma once
-
 #include <string>
 
 class TicketNode {
@@ -17,13 +16,15 @@ public:
         : ticketID(tID), trainCode(tCode), carriageNo(cNo), seatNo(sNo), 
           fromStationID(fromID), toStationID(toID), nextTicket(nullptr) {}
 
+    // Cấp quyền cho TicketList can thiệp trực tiếp vào con trỏ nextTicket
+    friend class TicketList;
+
     std::string getTicketID() const { return ticketID; }
     std::string getTrainCode() const { return trainCode; }
     int getCarriageNo() const { return carriageNo; }
     int getSeatNo() const { return seatNo; }
     int getFromStationID() const { return fromStationID; }
     int getToStationID() const { return toStationID; }
+    
     TicketNode* getNextTicket() const { return nextTicket; }
-
-    void setNextTicket(TicketNode* next) { nextTicket = next; }
 };

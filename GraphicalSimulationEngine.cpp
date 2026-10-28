@@ -11,7 +11,7 @@
 
 using namespace std;
 
-// Hàm phụ trợ nội suy vị trí Km của tàu theo phút trong ngày
+// Hàm phụ trợ tính vị trí Km của tàu theo thời gian mô phỏng
 static double calculateTrainKm(TrainNode* train, StationList* stationList, int currentMinute, int& trackUsedOut) {
     trackUsedOut = 0; // 0: Đang chạy khu gian, >0: Đang đỗ tại ray số x
     StopScheduleNode* currStop = train->getHeadSchedule();
@@ -51,20 +51,19 @@ static double calculateTrainKm(TrainNode* train, StationList* stationList, int c
         currStop = currStop->getNextStop();
     }
 
-    return -1.0; // Tàu chưa chạy hoặc đã kết thúc hành trình
+    return -1.0; // Tàu chưa chạy hoặc đã về bến
 }
 
 void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, TrainList* trainList) {
     if (!stationList || !trainList) return;
 
-    // Khởi tạo cửa sổ SFML
-    sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), 
-                            "PBL2: MO PHONG DIEU PHOI DUONG RAY & CHAY TAU (SFML GRAPHICS)", 
-                            sf::Style::Titlebar | sf::Style::Close);
+    // Khởi tạo cửa sổ trong SFML 3.x
+    sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), 
+                            "PBL2: MO PHONG DIEU PHOI DUONG RAY & CHAY TAU (SFML GRAPHICS)");
     window.setFramerateLimit(60);
 
     sf::Font font;
-    if (!font.loadFromFile("arial.ttf")) {
+    if (!font.openFromFile("arial.ttf")) {
         cout << "[Coi chung] Khong tim thay font 'arial.ttf'!\n";
     }
 
@@ -82,13 +81,15 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
     sf::Clock deltaClock;
 
     while (window.isOpen()) {
-        sf::Event event;
-        while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed)
+        // Xử lý sự kiện chuẩn SFML 3.x
+        while (const auto event = window.pollEvent()) {
+            if (event->is<sf::Event::Closed>()) {
                 window.close();
-            
-            if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Space) {
-                timeSpeed = (timeSpeed == 0.0f) ? 20.0f : 0.0f;
+            }
+            if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                if (keyPressed->code == sf::Keyboard::Key::Space) {
+                    timeSpeed = (timeSpeed == 0.0f) ? 20.0f : 0.0f;
+                }
             }
         }
 
@@ -99,25 +100,22 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         window.clear(sf::Color(30, 30, 35));
 
         // 1. Tiêu đề đồng hồ thời gian thực
-        sf::Text titleText;
-        titleText.setFont(font);
-        titleText.setCharacterSize(20);
-        titleText.setFillColor(sf::Color::White);
-        titleText.setPosition(marginX, 20.0f);
-        
         int hours = (int)currentMinute / 60;
         int mins = (int)currentMinute % 60;
         stringstream ss;
         ss << "PBL2 MO PHONG DIEU PHOI TAU HOA | THOI GIAN: "
            << setfill('0') << setw(2) << hours << ":" << setfill('0') << setw(2) << mins
-           << " | (SPACE: Tam dung/Chay tiếp)";
-        titleText.setString(ss.str());
+           << " | (SPACE: Tam dung/Chay tiep)";
+
+        sf::Text titleText(font, ss.str(), 20);
+        titleText.setFillColor(sf::Color::White);
+        titleText.setPosition(sf::Vector2f(marginX, 20.0f));
         window.draw(titleText);
 
         // 2. Đường ray chính (Main Track)
         sf::RectangleShape mainTrack(sf::Vector2f(trackWidth, 6.0f));
         mainTrack.setFillColor(sf::Color(150, 150, 150));
-        mainTrack.setPosition(marginX, trackY);
+        mainTrack.setPosition(sf::Vector2f(marginX, trackY));
         window.draw(mainTrack);
 
         // 3. Các nhà ga & Đường ray phụ (Siding Tracks)
@@ -127,16 +125,13 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
             sf::CircleShape stationCircle(10.0f);
             stationCircle.setFillColor(sf::Color(46, 204, 113));
-            stationCircle.setOrigin(10.0f, 10.0f);
-            stationCircle.setPosition(posX, trackY + 3.0f);
+            stationCircle.setOrigin(sf::Vector2f(10.0f, 10.0f));
+            stationCircle.setPosition(sf::Vector2f(posX, trackY + 3.0f));
             window.draw(stationCircle);
 
-            sf::Text stName;
-            stName.setFont(font);
-            stName.setString(st->getName() + "\n(" + to_string((int)st->getKmMarker()) + " km)");
-            stName.setCharacterSize(13);
+            sf::Text stName(font, st->getName() + "\n(" + to_string((int)st->getKmMarker()) + " km)", 13);
             stName.setFillColor(sf::Color(241, 196, 15));
-            stName.setPosition(posX - 25.0f, trackY + 20.0f);
+            stName.setPosition(sf::Vector2f(posX - 25.0f, trackY + 20.0f));
             window.draw(stName);
 
             // Vẽ các ray phụ
@@ -144,8 +139,8 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 float offsetY = (t - 1) * 35.0f;
                 sf::RectangleShape sidingTrack(sf::Vector2f(80.0f, 4.0f));
                 sidingTrack.setFillColor(sf::Color(100, 100, 200));
-                sidingTrack.setOrigin(40.0f, 2.0f);
-                sidingTrack.setPosition(posX, trackY + 3.0f + offsetY);
+                sidingTrack.setOrigin(sf::Vector2f(40.0f, 2.0f));
+                sidingTrack.setPosition(sf::Vector2f(posX, trackY + 3.0f + offsetY));
                 window.draw(sidingTrack);
             }
 
@@ -167,8 +162,8 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 }
 
                 sf::RectangleShape trainRect(sf::Vector2f(40.0f, 18.0f));
-                trainRect.setOrigin(20.0f, 9.0f);
-                trainRect.setPosition(posX, posY + 3.0f);
+                trainRect.setOrigin(sf::Vector2f(20.0f, 9.0f));
+                trainRect.setPosition(sf::Vector2f(posX, posY + 3.0f));
 
                 if (trackUsed == 0) {
                     trainRect.setFillColor(sf::Color(231, 76, 60));  // Đỏ: Chạy khu gian
@@ -179,12 +174,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 }
                 window.draw(trainRect);
 
-                sf::Text trainText;
-                trainText.setFont(font);
-                trainText.setString(train->getTrainCode());
-                trainText.setCharacterSize(12);
+                sf::Text trainText(font, train->getTrainCode(), 12);
                 trainText.setFillColor(sf::Color::White);
-                trainText.setPosition(posX - 12.0f, posY - 22.0f);
+                trainText.setPosition(sf::Vector2f(posX - 12.0f, posY - 22.0f));
                 window.draw(trainText);
             }
 

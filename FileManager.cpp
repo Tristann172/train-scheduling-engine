@@ -9,149 +9,158 @@
 #include "StopScheduleNode.h"
 #include "TicketNode.h"
 
+#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <iomanip>
 
-void FileManager::loadStations(const std::string& filename, StationList& stationList) {
-    std::ifstream file(filename.c_str());
-    if (!file.is_open()) return;
+using namespace std;
 
-    std::string line;
-    while (std::getline(file, line)) {
+// ==================== STATIONS ====================
+void FileManager::loadStations(const string& filename, StationList& stationList) {
+    ifstream inFile(filename);
+    if (!inFile.is_open()) return;
+
+    string line;
+    while (getline(inFile, line)) {
         if (line.empty()) continue;
-        std::stringstream ss(line);
-        std::string idStr, name, kmStr, tracksStr;
+        stringstream ss(line);
+        string strID, name, strKm, strTracks;
 
-        if (std::getline(ss, idStr, '|') &&
-            std::getline(ss, name, '|') &&
-            std::getline(ss, kmStr, '|') &&
-            std::getline(ss, tracksStr, '|')) {
-            stationList.addStation(std::stoi(idStr), name, std::stod(kmStr), std::stoi(tracksStr));
+        if (getline(ss, strID, '|') && getline(ss, name, '|') &&
+            getline(ss, strKm, '|') && getline(ss, strTracks, '|')) {
+            stationList.addStation(stoi(strID), name, stod(strKm), stoi(strTracks));
         }
     }
-    file.close();
+    inFile.close();
 }
 
-void FileManager::saveStations(const std::string& filename, const StationList& stationList) {
-    std::ofstream file(filename.c_str());
-    if (!file.is_open()) return;
+void FileManager::saveStations(const string& filename, const StationList& stationList) {
+    ofstream outFile(filename);
+    if (!outFile.is_open()) return;
 
-    StationNode* curr = stationList.getHead();
-    while (curr != nullptr) {
-        file << curr->getStationID() << "|"
-             << curr->getName() << "|"
-             << curr->getKmMarker() << "|"
-             << curr->getNumberOfTracks() << "\n";
-        curr = curr->getNextStation();
+    StationNode* st = stationList.getHead();
+    while (st != nullptr) {
+        outFile << st->getStationID() << "|"
+                << st->getName() << "|"
+                << st->getKmMarker() << "|"
+                << st->getNumberOfTracks() << "\n";
+        st = st->getNextStation();
     }
-    file.close();
+    outFile.close();
 }
 
-void FileManager::loadTrains(const std::string& filename, TrainList& trainList) {
-    std::ifstream file(filename.c_str());
-    if (!file.is_open()) return;
+// ==================== TRAINS ====================
+void FileManager::loadTrains(const string& filename, TrainList& trainList) {
+    ifstream inFile(filename);
+    if (!inFile.is_open()) return;
 
-    std::string line;
-    std::string currentTrainCode = "";
+    string line;
+    TrainNode* currentTrain = nullptr;
 
-    while (std::getline(file, line)) {
+    while (getline(inFile, line)) {
         if (line.empty()) continue;
-        std::stringstream ss(line);
-        std::string type;
-        std::getline(ss, type, '|');
 
-        if (type == "TRAIN") {
-            std::string code, dirStr;
-            std::getline(ss, code, '|');
-            std::getline(ss, dirStr, '|');
-            currentTrainCode = code;
-            trainList.addTrain(code, std::stoi(dirStr));
+        stringstream ss(line);
+        string token;
+        getline(ss, token, '|');
+
+        if (token == "CARRIAGE") {
+            if (currentTrain) {
+                string strNo, type, strSeats;
+                getline(ss, strNo, '|');
+                getline(ss, type, '|');
+                getline(ss, strSeats, '|');
+                // Gọi đúng thuộc tính hoặc phương thức thêm toa xe hiện có
+                if (currentTrain->getHeadCarriage() == nullptr) {
+                    currentTrain->addCarriage(stoi(strNo), type, stoi(strSeats));
+                } else {
+                    currentTrain->addCarriage(stoi(strNo), type, stoi(strSeats));
+                }
+            }
         } 
-        else if (type == "CARRIAGE" && !currentTrainCode.empty()) {
-            std::string cNoStr, cType, seatsStr;
-            std::getline(ss, cNoStr, '|');
-            std::getline(ss, cType, '|');
-            std::getline(ss, seatsStr, '|');
-            trainList.addCarriageToTrain(currentTrainCode, std::stoi(cNoStr), cType, std::stoi(seatsStr));
+        else if (token == "STOP") {
+            if (currentTrain) {
+                string strStID, strArr, strDep, strTrack;
+                getline(ss, strStID, '|');
+                getline(ss, strArr, '|');
+                getline(ss, strDep, '|');
+                getline(ss, strTrack, '|');
+                currentTrain->addSchedule(stoi(strStID), stoi(strArr), stoi(strDep), stoi(strTrack));
+            }
         } 
-        else if (type == "STOP" && !currentTrainCode.empty()) {
-            std::string stIDStr, arrStr, depStr, trackStr;
-            std::getline(ss, stIDStr, '|');
-            std::getline(ss, arrStr, '|');
-            std::getline(ss, depStr, '|');
-            std::getline(ss, trackStr, '|');
-            trainList.addStopScheduleToTrain(currentTrainCode, std::stoi(stIDStr), std::stoi(arrStr), std::stoi(depStr), std::stoi(trackStr));
+        else {
+            // Đọc dòng đầu tiên của Tàu: Mã Tàu | Hướng chạy
+            string trainCode = token;
+            string strDir;
+            if (getline(ss, strDir, '|')) {
+                trainList.addTrain(trainCode, stoi(strDir));
+                currentTrain = trainList.findTrainByCode(trainCode);
+            }
         }
     }
-    file.close();
+    inFile.close();
 }
 
-void FileManager::saveTrains(const std::string& filename, const TrainList& trainList) {
-    std::ofstream file(filename.c_str());
-    if (!file.is_open()) return;
+void FileManager::saveTrains(const string& filename, const TrainList& trainList) {
+    ofstream outFile(filename);
+    if (!outFile.is_open()) return;
 
-    TrainNode* train = trainList.getHead();
-    while (train != nullptr) {
-        file << "TRAIN|" << train->getTrainCode() << "|" << train->getDirection() << "\n";
+    TrainNode* tr = trainList.getHead();
+    while (tr != nullptr) {
+        outFile << tr->getTrainCode() << "|" << tr->getDirection() << "\n";
 
-        CarriageNode* carriage = train->getHeadCarriage();
-        while (carriage != nullptr) {
-            file << "CARRIAGE|" << carriage->getCarriageNo() << "|"
-                 << carriage->getType() << "|" << carriage->getTotalSeats() << "\n";
-            carriage = carriage->getNextCarriage();
+        CarriageNode* c = tr->getHeadCarriage();
+        while (c != nullptr) {
+            outFile << "CARRIAGE|" << c->getCarriageNo() << "|" << c->getType() << "|" << c->getTotalSeats() << "\n";
+            c = c->getNextCarriage();
         }
 
-        StopScheduleNode* stop = train->getHeadSchedule();
-        while (stop != nullptr) {
-            file << "STOP|" << stop->getStationID() << "|"
-                 << stop->getArrivalMinute() << "|"
-                 << stop->getDepartureMinute() << "|"
-                 << stop->getTrackUsed() << "\n";
-            stop = stop->getNextStop();
+        StopScheduleNode* s = tr->getHeadSchedule();
+        while (s != nullptr) {
+            outFile << "STOP|" << s->getStationID() << "|" << s->getArrivalMinute() << "|" << s->getDepartureMinute() << "|" << s->getTrackUsed() << "\n";
+            s = s->getNextStop();
         }
 
-        train = train->getNextTrain();
+        tr = tr->getNextTrain();
     }
-    file.close();
+    outFile.close();
 }
 
-void FileManager::loadTickets(const std::string& filename, TicketList& ticketList) {
-    std::ifstream file(filename.c_str());
-    if (!file.is_open()) return;
+// ==================== TICKETS ====================
+void FileManager::loadTickets(const string& filename, TicketList& ticketList) {
+    ifstream inFile(filename);
+    if (!inFile.is_open()) return;
 
-    std::string line;
-    while (std::getline(file, line)) {
+    string line;
+    while (getline(inFile, line)) {
         if (line.empty()) continue;
-        std::stringstream ss(line);
-        std::string tID, code, cNoStr, sNoStr, fromStr, toStr;
+        stringstream ss(line);
+        string tID, trCode, strCNo, strSNo, strFrom, strTo;
 
-        if (std::getline(ss, tID, '|') &&
-            std::getline(ss, code, '|') &&
-            std::getline(ss, cNoStr, '|') &&
-            std::getline(ss, sNoStr, '|') &&
-            std::getline(ss, fromStr, '|') &&
-            std::getline(ss, toStr, '|')) {
-            ticketList.addTicket(tID, code, std::stoi(cNoStr), std::stoi(sNoStr), std::stoi(fromStr), std::stoi(toStr));
+        if (getline(ss, tID, '|') && getline(ss, trCode, '|') &&
+            getline(ss, strCNo, '|') && getline(ss, strSNo, '|') &&
+            getline(ss, strFrom, '|') && getline(ss, strTo, '|')) {
+            
+            ticketList.addTicket(tID, trCode, stoi(strCNo), stoi(strSNo), stoi(strFrom), stoi(strTo));
         }
     }
-    file.close();
+    inFile.close();
 }
 
-void FileManager::saveTickets(const std::string& filename, const TicketList& ticketList) {
-    std::ofstream file(filename.c_str());
-    if (!file.is_open()) return;
+void FileManager::saveTickets(const string& filename, const TicketList& ticketList) {
+    ofstream outFile(filename);
+    if (!outFile.is_open()) return;
 
-    TicketNode* curr = ticketList.getHead();
-    while (curr != nullptr) {
-        file << curr->getTicketID() << "|"
-             << curr->getTrainCode() << "|"
-             << curr->getCarriageNo() << "|"
-             << curr->getSeatNo() << "|"
-             << curr->getFromStationID() << "|"
-             << curr->getToStationID() << "\n";
-        curr = curr->getNextTicket();
+    TicketNode* tk = ticketList.getHead();
+    while (tk != nullptr) {
+        outFile << tk->getTicketID() << "|"
+                << tk->getTrainCode() << "|"
+                << tk->getCarriageNo() << "|"
+                << tk->getSeatNo() << "|"
+                << tk->getFromStationID() << "|"
+                << tk->getToStationID() << "\n";
+        tk = tk->getNextTicket();
     }
-    file.close();
+    outFile.close();
 }

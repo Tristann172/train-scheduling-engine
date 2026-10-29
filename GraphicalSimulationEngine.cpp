@@ -11,13 +11,39 @@
 
 using namespace std;
 
-// Hàm phụ trợ tính vị trí Km của tàu theo thời gian mô phỏng
+// Hàm tính vị trí Km của tàu chuẩn xác cho mọi mốc thời gian
 static double calculateTrainKm(TrainNode* train, StationList* stationList, int currentMinute, int& trackUsedOut) {
-    trackUsedOut = 0; // 0: Đang chạy khu gian, >0: Đang đỗ tại ray số x
+    trackUsedOut = 0;
     StopScheduleNode* currStop = train->getHeadSchedule();
     if (!currStop) return -1.0;
 
-    // 1. Kiểm tra nếu tàu đang đỗ tại ga
+    // Lấy thông tin ga đầu tiên và ga cuối cùng trong lịch trình
+    StopScheduleNode* firstStop = currStop;
+    StopScheduleNode* lastStop = currStop;
+    while (lastStop->getNextStop() != nullptr) {
+        lastStop = lastStop->getNextStop();
+    }
+
+    // 1. Trường hợp thời gian chưa đến giờ tàu xuất phát -> Cho tàu chờ sẵn tại Ga Đầu
+    if (currentMinute < firstStop->getArrivalMinute()) {
+        StationNode* st = stationList->findStationByID(firstStop->getStationID());
+        if (st) {
+            trackUsedOut = firstStop->getTrackUsed();
+            return st->getKmMarker();
+        }
+    }
+
+    // 2. Trường hợp thời gian đã qua giờ tàu về ga cuối -> Cho tàu đỗ tại Ga Cuối
+    if (currentMinute > lastStop->getDepartureMinute()) {
+        StationNode* st = stationList->findStationByID(lastStop->getStationID());
+        if (st) {
+            trackUsedOut = lastStop->getTrackUsed();
+            return st->getKmMarker();
+        }
+    }
+
+    // 3. Kiểm tra nếu tàu đang đỗ tại một ga trung gian
+    currStop = train->getHeadSchedule();
     while (currStop != nullptr) {
         if (currentMinute >= currStop->getArrivalMinute() && currentMinute <= currStop->getDepartureMinute()) {
             StationNode* st = stationList->findStationByID(currStop->getStationID());
@@ -29,7 +55,7 @@ static double calculateTrainKm(TrainNode* train, StationList* stationList, int c
         currStop = currStop->getNextStop();
     }
 
-    // 2. Nếu tàu đang di chuyển giữa 2 ga (Khu gian)
+    // 4. Trường hợp tàu đang di chuyển giữa 2 ga (Khu gian)
     currStop = train->getHeadSchedule();
     while (currStop != nullptr && currStop->getNextStop() != nullptr) {
         StopScheduleNode* nextStop = currStop->getNextStop();
@@ -51,13 +77,12 @@ static double calculateTrainKm(TrainNode* train, StationList* stationList, int c
         currStop = currStop->getNextStop();
     }
 
-    return -1.0; // Tàu chưa chạy hoặc đã về bến
+    return -1.0;
 }
 
 void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, TrainList* trainList) {
     if (!stationList || !trainList) return;
 
-    // Khởi tạo cửa sổ trong SFML 3.x
     sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), 
                             "PBL2: MO PHONG DIEU PHOI DUONG RAY & CHAY TAU (SFML GRAPHICS)");
     window.setFramerateLimit(60);
@@ -77,18 +102,17 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
     float trackWidth = WINDOW_WIDTH - 2 * marginX;
 
     float currentMinute = 0.0f;
-    float timeSpeed = 20.0f;
+    float timeSpeed = 30.0f;
     sf::Clock deltaClock;
 
     while (window.isOpen()) {
-        // Xử lý sự kiện chuẩn SFML 3.x
         while (const auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
                 window.close();
             }
             if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                 if (keyPressed->code == sf::Keyboard::Key::Space) {
-                    timeSpeed = (timeSpeed == 0.0f) ? 20.0f : 0.0f;
+                    timeSpeed = (timeSpeed == 0.0f) ? 30.0f : 0.0f;
                 }
             }
         }
@@ -99,7 +123,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
         window.clear(sf::Color(30, 30, 35));
 
-        // 1. Tiêu đề đồng hồ thời gian thực
+        // 1. Đồng hồ thời gian thực
         int hours = (int)currentMinute / 60;
         int mins = (int)currentMinute % 60;
         stringstream ss;
@@ -118,7 +142,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         mainTrack.setPosition(sf::Vector2f(marginX, trackY));
         window.draw(mainTrack);
 
-        // 3. Các nhà ga & Đường ray phụ (Siding Tracks)
+        // 3. Hiển thị Nhà ga & Đường ray phụ
         StationNode* st = stationList->getHead();
         while (st != nullptr) {
             float posX = marginX + (float)(st->getKmMarker() / maxKm) * trackWidth;
@@ -129,12 +153,11 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
             stationCircle.setPosition(sf::Vector2f(posX, trackY + 3.0f));
             window.draw(stationCircle);
 
-            sf::Text stName(font, st->getName() + "\n(" + to_string((int)st->getKmMarker()) + " km)", 13);
+            sf::Text stName(font, st->getName() + "\n(" + to_string((int)st->getKmMarker()) + " km)", 12);
             stName.setFillColor(sf::Color(241, 196, 15));
             stName.setPosition(sf::Vector2f(posX - 25.0f, trackY + 20.0f));
             window.draw(stName);
 
-            // Vẽ các ray phụ
             for (int t = 2; t <= st->getNumberOfTracks(); ++t) {
                 float offsetY = (t - 1) * 35.0f;
                 sf::RectangleShape sidingTrack(sf::Vector2f(80.0f, 4.0f));
@@ -147,7 +170,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
             st = st->getNextStation();
         }
 
-        // 4. Các đoàn tàu chuyển động
+        // 4. Vẽ các đoàn tàu chuyển động
         TrainNode* train = trainList->getHead();
         while (train != nullptr) {
             int trackUsed = 0;
@@ -161,8 +184,8 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                     posY += (trackUsed - 1) * 35.0f;
                 }
 
-                sf::RectangleShape trainRect(sf::Vector2f(40.0f, 18.0f));
-                trainRect.setOrigin(sf::Vector2f(20.0f, 9.0f));
+                sf::RectangleShape trainRect(sf::Vector2f(45.0f, 20.0f));
+                trainRect.setOrigin(sf::Vector2f(22.5f, 10.0f));
                 trainRect.setPosition(sf::Vector2f(posX, posY + 3.0f));
 
                 if (trackUsed == 0) {
@@ -170,13 +193,13 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 } else if (trackUsed == 1) {
                     trainRect.setFillColor(sf::Color(241, 196, 15)); // Vàng: Ray chính
                 } else {
-                    trainRect.setFillColor(sf::Color(155, 89, 182)); // Tím: Ray phụ (Tránh tàu)
+                    trainRect.setFillColor(sf::Color(155, 89, 182)); // Tím: Ray phụ
                 }
                 window.draw(trainRect);
 
                 sf::Text trainText(font, train->getTrainCode(), 12);
                 trainText.setFillColor(sf::Color::White);
-                trainText.setPosition(sf::Vector2f(posX - 12.0f, posY - 22.0f));
+                trainText.setPosition(sf::Vector2f(posX - 14.0f, posY - 25.0f));
                 window.draw(trainText);
             }
 

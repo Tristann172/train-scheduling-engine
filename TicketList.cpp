@@ -1,243 +1,182 @@
 #include "TicketList.h"
 #include "StationList.h"
 #include "TrainList.h"
-#include "FileManager.h"
-#include <iomanip>
-#include <cstdlib>
+#include "StationNode.h"
+#include "TrainNode.h"
 #include <iostream>
+#include <algorithm>
 
 using namespace std;
 
 TicketList::TicketList() : head(nullptr) {}
 
-void TicketList::clear() {
-    while (head != nullptr) {
-        TicketNode* temp = head;
-        head = head->getNextTicket();
-        delete temp; 
-    }
-    head = nullptr;
-}
-
 TicketList::~TicketList() {
     clear();
 }
 
-TicketNode* TicketList::getHead() const {
-    return head;
+void TicketList::clear() {
+    while (head != nullptr) {
+        TicketNode* temp = head;
+        head = head->getNextTicket();
+        delete temp;
+    }
+    head = nullptr;
 }
 
-void TicketList::addTicket(const std::string& ticketID, const std::string& trainCode,
+void TicketList::addTicket(const string& ticketID, const string& trainCode, 
                            int carriageNo, int seatNo, int fromID, int toID) {
     TicketNode* newNode = new TicketNode(ticketID, trainCode, carriageNo, seatNo, fromID, toID);
-    
-    if (head == NULL) {
+    if (!head) {
         head = newNode;
-    } else {
-        TicketNode* current = head;
-        while (current->getNextTicket() != NULL) {
-            current = current->getNextTicket();
-        }
-        current->setNextTicket(newNode);
+        return;
     }
+    TicketNode* temp = head;
+    while (temp->getNextTicket()) {
+        temp = temp->getNextTicket();
+    }
+    temp->setNextTicket(newNode);
 }
 
-bool TicketList::isSeatAvailable(StationList* stationList, const std::string& trainCode,
-                                 int carriageNo, int seatNo, int newFromID, int newToID) const {
-    
-    StationNode* newFromSt = stationList->findStationByID(newFromID);
-    StationNode* newToSt = stationList->findStationByID(newToID);
-
-    if (newFromSt == NULL || newToSt == NULL) return false; 
-
-    double newKm1 = newFromSt->getKmMarker();
-    double newKm2 = newToSt->getKmMarker();
-    double newMinKm = (newKm1 < newKm2) ? newKm1 : newKm2;
-    double newMaxKm = (newKm1 > newKm2) ? newKm1 : newKm2;
-
-    TicketNode* current = head;
-    while (current != NULL) {
-        if (current->getTrainCode() == trainCode &&
-            current->getCarriageNo() == carriageNo &&
-            current->getSeatNo() == seatNo) {
-
-            StationNode* existFromSt = stationList->findStationByID(current->getFromStationID());
-            StationNode* existToSt = stationList->findStationByID(current->getToStationID());
-
-            if (existFromSt != NULL && existToSt != NULL) {
-                double existKm1 = existFromSt->getKmMarker();
-                double existKm2 = existToSt->getKmMarker();
-                double existMinKm = (existKm1 < existKm2) ? existKm1 : existKm2;
-                double existMaxKm = (existKm1 > existKm2) ? existKm1 : existKm2;
-
-                if (!(existMaxKm <= newMinKm || existMinKm >= newMaxKm)) {
-                    return false; 
-                }
-            }
-        }
-        current = current->getNextTicket();
+TicketNode* TicketList::findTicketByID(const string& ticketID) const {
+    TicketNode* temp = head;
+    while (temp != nullptr) {
+        if (temp->getTicketID() == ticketID) return temp;
+        temp = temp->getNextTicket();
     }
-    return true; 
+    return nullptr;
 }
 
-TicketNode* TicketList::findTicketByID(const std::string& ticketID) const {
-    TicketNode* current = head;
-    while (current != NULL) {
-        if (current->getTicketID() == ticketID) {
-            return current;
-        }
-        current = current->getNextTicket();
-    }
-    return NULL;
-}
+bool TicketList::cancelTicket(const string& ticketID) {
+    if (!head) return false;
 
-bool TicketList::cancelTicket(const std::string& ticketID) {
-    if (head == NULL) return false;
     if (head->getTicketID() == ticketID) {
         TicketNode* temp = head;
         head = head->getNextTicket();
-        delete temp; // Thu hồi vùng nhớ Heap
+        delete temp;
         return true;
     }
-    TicketNode* current = head;
-    while (current->getNextTicket() != NULL) {
-        if (current->getNextTicket()->getTicketID() == ticketID) {
-            TicketNode* temp = current->getNextTicket();
-            current->setNextTicket(temp->getNextTicket());
-            delete temp; // Thu hồi vùng nhớ Heap
-            return true;
-        }
-        current = current->getNextTicket();
+
+    TicketNode* curr = head;
+    while (curr->getNextTicket() && curr->getNextTicket()->getTicketID() != ticketID) {
+        curr = curr->getNextTicket();
+    }
+
+    if (curr->getNextTicket()) {
+        TicketNode* temp = curr->getNextTicket();
+        curr->setNextTicket(temp->getNextTicket());
+        delete temp;
+        return true;
     }
     return false;
 }
 
 void TicketList::displayAllTickets() const {
-    cout << "\n=== DANH SACH VE DA DAT TRONG HE THONG ===\n";
-    TicketNode* current = head;
-    if (current == NULL) {
-        cout << "(Chua co ve nao duoc dat)\n";
+    cout << "\n=== DANH SACH VE DA DAT ===\n";
+    TicketNode* temp = head;
+    if (!temp) {
+        cout << "(Chua co ve nao trong he thong)\n";
         return;
     }
-    while (current != NULL) {
-        cout << "Ma ve: " << current->getTicketID()
-             << " | Tau: " << current->getTrainCode()
-             << " | Toa: " << current->getCarriageNo()
-             << " | Ghe: " << current->getSeatNo()
-             << " | Chang: Ga " << current->getFromStationID() 
-             << " -> Ga " << current->getToStationID() << "\n";
-        current = current->getNextTicket();
+    while (temp != nullptr) {
+        cout << "Ma Ve: " << temp->getTicketID()
+             << " | Tau: " << temp->getTrainCode()
+             << " | Toa: " << temp->getCarriageNo()
+             << " | Ghe: " << temp->getSeatNo()
+             << " | Chang: Ga " << temp->getFromStationID() 
+             << " -> Ga " << temp->getToStationID() << "\n";
+        temp = temp->getNextTicket();
     }
 }
 
-void TicketList::displaySeatMap(StationList* stationList, const std::string& trainCode, 
+// ==================== SEGMENT BOOKING (KIỂM TRA GIAO THOA KM) ====================
+bool TicketList::isSeatAvailable(StationList* stationList, const string& trainCode, 
+                                int carriageNo, int seatNo, int newFromID, int newToID) const 
+{
+    if (!stationList) return false;
+
+    StationNode* stNewFrom = stationList->findStationByID(newFromID);
+    StationNode* stNewTo = stationList->findStationByID(newToID);
+    if (!stNewFrom || !stNewTo) return false;
+
+    double newKmStart = min(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
+    double newKmEnd = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
+
+    TicketNode* curr = head;
+    while (curr != nullptr) {
+        if (curr->getTrainCode() == trainCode &&
+            curr->getCarriageNo() == carriageNo &&
+            curr->getSeatNo() == seatNo) 
+        {
+            StationNode* stExistFrom = stationList->findStationByID(curr->getFromStationID());
+            StationNode* stExistTo = stationList->findStationByID(curr->getToStationID());
+
+            if (stExistFrom && stExistTo) {
+                double existKmStart = min(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
+                double existKmEnd = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
+
+                // Hai đoạn [A1, B1] và [A2, B2] giao thoa khi: max(A1, A2) < min(B1, B2)
+                double overlapStart = max(newKmStart, existKmStart);
+                double overlapEnd = min(newKmEnd, existKmEnd);
+
+                if (overlapStart < overlapEnd) {
+                    return false; // Đã bị chiếm trong đoạn này
+                }
+            }
+        }
+        curr = curr->getNextTicket();
+    }
+    return true; // Ghế còn trống
+}
+
+void TicketList::displaySeatMap(StationList* stationList, const string& trainCode,
                                 int carriageNo, int totalSeats, int fromID, int toID) const 
 {
-    cout << "\n-------------------------------------------------------------\n";
-    cout << "   SO DO GHE TOA " << carriageNo << " (TAU " << trainCode 
-         << ") CHUYEN GA " << fromID << " -> " << toID << "\n";
-    cout << "   Chu thich: [XX] = Da ban | [01] = Ghe con trong\n";
-    cout << "-------------------------------------------------------------\n";
+    cout << "\n--- SO DO GHE TOA " << carriageNo << " (TAU " << trainCode << ") ---";
+    cout << "\n[Chang: Ga " << fromID << " -> Ga " << toID << "]\n";
 
     for (int i = 1; i <= totalSeats; ++i) {
-        bool available = isSeatAvailable(stationList, trainCode, carriageNo, i, fromID, toID);
-        
-        if (available) {
-            cout << "[" << setfill('0') << setw(2) << i << "] ";
+        bool free = isSeatAvailable(stationList, trainCode, carriageNo, i, fromID, toID);
+        if (free) {
+            cout << "[" << i << ": O] "; // O = Trống
         } else {
-            cout << "[ XX ] ";
+            cout << "[" << i << ": X] "; // X = Đã đặt
         }
-
-        // Tạo lối đi giữa hàng ghế trong toa tàu
-        if (i % 4 == 0) {
-            cout << "\n";
-        } else if (i % 2 == 0) {
-            cout << "   "; 
-        }
+        if (i % 4 == 0) cout << "\n";
     }
-    cout << "-------------------------------------------------------------\n";
+    cout << "\n(Ghi chu: O = Con trong, X = Da duoc dat)\n";
 }
 
 void TicketList::bookTicketUI(StationList* stationList, TrainList* trainList) {
-    if (stationList == NULL || trainList == NULL) {
-        cout << "[Loi] Du lieu he thong chua san sang!\n";
+    string tID, trCode;
+    int cNo, sNo, fromID, toID;
+
+    cout << "\n=== CHUONG TRINH DAT VE MOI (SEGMENT BOOKING) ===\n";
+    cout << "Nhap Ma Ve: "; cin >> tID;
+    cout << "Nhap Ma Tau: "; cin >> trCode;
+    cout << "Nhap So Toa: "; cin >> cNo;
+    cout << "Nhap ID Ga Di: "; cin >> fromID;
+    cout << "Nhap ID Ga Den: "; cin >> toID;
+
+    TrainNode* train = trainList->findTrainByCode(trCode);
+    if (!train) {
+        cout << "-> [LOI] Khong tim thay tau " << trCode << "\n";
         return;
     }
 
-    string trainCode;
-    int fromID, toID;
-
-    cout << "\n=== TRA CUU & DAT VE PHAN DOAN CHANG ===\n";
-    cout << "Nhap ma hieu tau (vi du: SE1): "; cin >> trainCode;
-
-    TrainNode* train = trainList->findTrainByCode(trainCode);
-    if (train == NULL) {
-        cout << "[Loi] Khong tim thay tau co ma " << trainCode << "!\n";
+    int totalSeats = train->getCarriageSeats(cNo);
+    if (totalSeats == 0) {
+        cout << "-> [LOI] Khong tim thay toa " << cNo << " tren tau " << trCode << "\n";
         return;
     }
 
-    cout << "Nhap ID Ga di: "; cin >> fromID;
-    cout << "Nhap ID Ga den: "; cin >> toID;
+    displaySeatMap(stationList, trCode, cNo, totalSeats, fromID, toID);
 
-    StationNode* stFrom = stationList->findStationByID(fromID);
-    StationNode* stTo = stationList->findStationByID(toID);
+    cout << "Nhap So Ghe muon dat: "; cin >> sNo;
 
-    if (stFrom == NULL || stTo == NULL) {
-        cout << "[Loi] Ma ga di hoac ga den khong ton tai!\n";
-        return;
-    }
-
-    CarriageNode* currCarriage = train->getHeadCarriage();
-    if (currCarriage == NULL) {
-        cout << "[Loi] Tau chua duoc thiet lap danh sach toa xe!\n";
-        return;
-    }
-
-    cout << "\nDanh sach toa xe hien co tren tau " << trainCode << ":\n";
-    while (currCarriage != NULL) {
-        cout << " + Toa " << currCarriage->getCarriageNo() 
-             << " | Loai: " << currCarriage->getType() 
-             << " | Tong ghe: " << currCarriage->getTotalSeats() << "\n";
-        currCarriage = currCarriage->getNextCarriage();
-    }
-
-    int selectedCarriage;
-    cout << "Nhap so toa chon: "; cin >> selectedCarriage;
-
-    currCarriage = train->getHeadCarriage();
-    while (currCarriage != NULL && currCarriage->getCarriageNo() != selectedCarriage) {
-        currCarriage = currCarriage->getNextCarriage();
-    }
-
-    if (currCarriage == NULL) {
-        cout << "[Loi] So toa khong hop le!\n";
-        return;
-    }
-
-    displaySeatMap(stationList, trainCode, selectedCarriage, currCarriage->getTotalSeats(), fromID, toID);
-
-    int selectedSeat;
-    cout << "Nhap so ghe ban muon dat: "; cin >> selectedSeat;
-
-    if (selectedSeat < 1 || selectedSeat > currCarriage->getTotalSeats()) {
-        cout << "[Loi] So ghe nam ngoai pham vi toa!\n";
-        return;
-    }
-
-    if (isSeatAvailable(stationList, trainCode, selectedCarriage, selectedSeat, fromID, toID)) {
-        string ticketID = "TCK" + to_string(rand() % 900 + 100);
-        
-        addTicket(ticketID, trainCode, selectedCarriage, selectedSeat, fromID, toID);
-        
-        FileManager::saveTickets("tickets.txt", *this);
-
-        cout << "\n==================================================\n";
-        cout << " [THANH CONG] DA CAP VE VOI THONG TIN SAU:        \n";
-        cout << "  - Ma ve: " << ticketID << "\n";
-        cout << "  - Tau: " << trainCode << " | Toa: " << selectedCarriage << " | Ghe: " << selectedSeat << "\n";
-        cout << "  - Chang: " << stFrom->getName() << " -> " << stTo->getName() << "\n";
-        cout << "==================================================\n";
+    if (isSeatAvailable(stationList, trCode, cNo, sNo, fromID, toID)) {
+        addTicket(tID, trCode, cNo, sNo, fromID, toID);
+        cout << "-> [THANH CONG] Dat ve " << tID << " thanh cong!\n";
     } else {
-        cout << "\n[THAT BAI] Ghe " << selectedSeat << " da duoc ban cho khach khac trong phan doan chang nay!\n";
+        cout << "-> [THAT BAI] Ghe so " << sNo << " da co nguoi dat trong chang nay!\n";
     }
 }

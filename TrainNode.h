@@ -1,28 +1,28 @@
 #pragma once
 
+#include <string>
 #include "CarriageNode.h"
 #include "StopScheduleNode.h"
-#include <string>
 
 class TrainNode {
 private:
     std::string trainCode;
-    int direction; // 1: Nam, 0: Bắc
+    int direction; // 1: Nam, 0: Bac
     CarriageNode* headCarriage;
     StopScheduleNode* headSchedule;
     TrainNode* nextTrain;
 
 public:
-    TrainNode(const std::string& code = "", int dir = 1)
+    TrainNode(const std::string& code, int dir)
         : trainCode(code), direction(dir), headCarriage(nullptr), headSchedule(nullptr), nextTrain(nullptr) {}
 
     ~TrainNode() {
-        while (headCarriage != nullptr) {
+        while (headCarriage) {
             CarriageNode* temp = headCarriage;
             headCarriage = headCarriage->getNextCarriage();
             delete temp;
         }
-        while (headSchedule != nullptr) {
+        while (headSchedule) {
             StopScheduleNode* temp = headSchedule;
             headSchedule = headSchedule->getNextStop();
             delete temp;
@@ -38,34 +38,57 @@ public:
 
     // Setters
     void setNextTrain(TrainNode* next) { nextTrain = next; }
+    
+    // ==================== BỔ SUNG 2 HÀM NÀY ĐỂ HẾT LỖI C2039 ====================
     void setHeadCarriage(CarriageNode* head) { headCarriage = head; }
     void setHeadSchedule(StopScheduleNode* head) { headSchedule = head; }
 
-    // Phương thức thêm toa xe
-    void addCarriage(int carriageNo, const std::string& type, int totalSeats) {
-        CarriageNode* newCarriage = new CarriageNode(carriageNo, type, totalSeats);
-        if (headCarriage == nullptr) {
-            headCarriage = newCarriage;
-        } else {
-            CarriageNode* temp = headCarriage;
-            while (temp->getNextCarriage() != nullptr) {
-                temp = temp->getNextCarriage();
-            }
-            temp->setNextCarriage(newCarriage);
+    // Các hàm nghiệp vụ hiện có
+    void addCarriage(int cNo, const std::string& type, int seats) {
+        CarriageNode* newNode = new CarriageNode(cNo, type, seats);
+        if (!headCarriage) {
+            headCarriage = newNode;
+            return;
         }
+        CarriageNode* temp = headCarriage;
+        while (temp->getNextCarriage()) temp = temp->getNextCarriage();
+        temp->setNextCarriage(newNode);
     }
 
-    // Phương thức thêm lịch dừng
-    void addSchedule(int stationID, int arrivalMinute, int departureMinute, int trackUsed) {
-        StopScheduleNode* newStop = new StopScheduleNode(stationID, arrivalMinute, departureMinute, trackUsed);
-        if (headSchedule == nullptr) {
-            headSchedule = newStop;
-        } else {
-            StopScheduleNode* temp = headSchedule;
-            while (temp->getNextStop() != nullptr) {
-                temp = temp->getNextStop();
-            }
-            temp->setNextStop(newStop);
+    void addSchedule(int stID, int arr, int dep, int track) {
+        StopScheduleNode* newNode = new StopScheduleNode(stID, arr, dep, track);
+        if (!headSchedule) {
+            headSchedule = newNode;
+            return;
         }
+        StopScheduleNode* temp = headSchedule;
+        while (temp->getNextStop()) temp = temp->getNextStop();
+        temp->setNextStop(newNode);
+    }
+
+    bool applyDelayPropagation(int fromStationID, int delayMinutes) {
+        StopScheduleNode* curr = headSchedule;
+        bool found = false;
+
+        while (curr != nullptr) {
+            if (curr->getStationID() == fromStationID) {
+                found = true;
+            }
+            if (found) {
+                curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
+                curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
+            }
+            curr = curr->getNextStop();
+        }
+        return found;
+    }
+
+    int getCarriageSeats(int carriageNo) const {
+        CarriageNode* c = headCarriage;
+        while (c) {
+            if (c->getCarriageNo() == carriageNo) return c->getTotalSeats();
+            c = c->getNextCarriage();
+        }
+        return 0;
     }
 };

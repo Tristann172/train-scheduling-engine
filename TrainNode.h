@@ -38,12 +38,9 @@ public:
 
     // Setters
     void setNextTrain(TrainNode* next) { nextTrain = next; }
-    
-    // ==================== BỔ SUNG 2 HÀM NÀY ĐỂ HẾT LỖI C2039 ====================
     void setHeadCarriage(CarriageNode* head) { headCarriage = head; }
     void setHeadSchedule(StopScheduleNode* head) { headSchedule = head; }
 
-    // Các hàm nghiệp vụ hiện có
     void addCarriage(int cNo, const std::string& type, int seats) {
         CarriageNode* newNode = new CarriageNode(cNo, type, seats);
         if (!headCarriage) {
@@ -66,6 +63,7 @@ public:
         temp->setNextStop(newNode);
     }
 
+    // 1. Lan truyền dời giờ các ga tiếp theo khi xảy ra trễ
     bool applyDelayPropagation(int fromStationID, int delayMinutes) {
         StopScheduleNode* curr = headSchedule;
         bool found = false;

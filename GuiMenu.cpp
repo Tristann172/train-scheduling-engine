@@ -132,15 +132,15 @@ void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, Tick
 }
 
 // Apply Delay UI
-void GuiMenu::applyDelayUI(TrainList& trainList, sf::Font& font) {
+void GuiMenu::applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font) {
     string trainCode, strStID, strDelay;
     if (showInputDialog("DELAY PROPAGATION", "Nhap Ma Tau bi tre (Vi du: SE1):", trainCode, font) &&
         showInputDialog("DELAY PROPAGATION", "Nhap ID Ga bat dau bi tre (Vi du: 102):", strStID, font) &&
         showInputDialog("DELAY PROPAGATION", "Nhap So phut tre (Vi du: 30):", strDelay, font)) 
     {
         try {
-            TrainNode* train = trainList.findTrainByCode(trainCode);
-            if (train && train->applyDelayPropagation(stoi(strStID), stoi(strDelay))) {
+            // Gọi hàm xử lý 2 bước: Dời giờ + Tái lập lịch tránh tàu
+            if (trainList.applyDelayAndReschedule(trainCode, stoi(strStID), stoi(strDelay), &stationList)) {
                 FileManager::saveTrains("trains.txt", trainList);
             }
         } catch (...) {}
@@ -379,8 +379,8 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             break;
                         }
                         case 11: {
-                            applyDelayUI(trainList, font);
-                            outputLog = "-> [THANH CONG] DA TAI TICH HOP DELAY PROPAGATION!";
+                            applyDelayUI(stationList, trainList, font);
+                            outputLog = "-> [THANH CONG] DA HOAN THANH DELAY PROPAGATION VA TAI LAP LICH TRANH TAU!";
                             break;
                         }
                         case 12: {

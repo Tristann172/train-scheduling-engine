@@ -93,5 +93,5 @@ public:
     static void runGUIMenu(StationList& stationList, TrainList& trainList, TicketList& ticketList);
     static bool showInputDialog(const std::string& title, const std::string& promptLabel, std::string& outputValue, sf::Font& font);
     static void showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font);
-    static void applyDelayUI(TrainList& trainList, sf::Font& font);
+    static void applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font);
 };

@@ -25,16 +25,8 @@ public:
 
     bool cancelTicket(const std::string& ticketID);
 
-    void displayAllTickets() const; 
-
     // Kiểm tra ghế trống trên phân đoạn chặng theo mốc Km ga
-    bool isSeatAvailable(StationList* stationList, const std::string& trainCode, 
-                        int carriageNo, int seatNo, int newFromID, int newToID) const;
+    bool isSeatAvailable(StationList* stationList, TrainList* trainList, const std::string& trainCode, 
+                     int carriageNo, int seatNo, int newFromID, int newToID) const;
 
-    // Hiển thị ma trận sơ đồ ghế
-    void displaySeatMap(StationList* stationList, const std::string& trainCode,
-                        int carriageNo, int totalSeats, int fromID, int toID) const;
-
-    // Giao diện / Luồng đặt vé
-    void bookTicketUI(StationList* stationList, TrainList* trainList);
 };

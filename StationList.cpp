@@ -42,15 +42,3 @@ StationNode* StationList::findStationByID(int id) const {
     }
     return nullptr;
 }
-
-void StationList::displayAll() const {
-    std::cout << "\n=== DANH SACH CAC GA TREN TUYEN ===\n";
-    StationNode* temp = head;
-    while (temp != nullptr) {
-        std::cout << "ID: " << temp->getStationID() 
-                  << " | Ten: " << temp->getName() 
-                  << " | Km: " << temp->getKmMarker() 
-                  << " | So ray phu: " << temp->getNumberOfTracks() << "\n";
-        temp = temp->getNextStation();
-    }
-}

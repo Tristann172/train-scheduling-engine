@@ -15,6 +15,5 @@ public:
     StationNode* getHead() const;
     void addStation(int id, const std::string& name, double km, int tracks);
     StationNode* findStationByID(int id) const;
-    void displayAll() const;
     void clear();
 };

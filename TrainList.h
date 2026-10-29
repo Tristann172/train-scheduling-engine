@@ -22,9 +22,6 @@ public:
     void addCarriageToTrain(const std::string& code, int cNo, const std::string& type, int seats);
     void addStopScheduleToTrain(const std::string& code, int stID, int arr, int dep, int track);
 
-    // Bổ sung: Hiển thị danh sách tàu
-    void displayAllTrains() const;
-    
     // Bổ sung: Thuật toán Tái lập lịch tránh tàu / Phân bổ ray phụ khi phát hiện xung đột
     void resolveConflictAndScheduleSiding(StationList* stationList);
 

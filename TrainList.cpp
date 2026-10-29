@@ -62,16 +62,6 @@ void TrainList::addStopScheduleToTrain(const string& code, int stID, int arr, in
     }
 }
 
-void TrainList::displayAllTrains() const {
-    cout << "\n=== DANH SACH CAC CHUYEN TAU ===\n";
-    TrainNode* temp = head;
-    while (temp != nullptr) {
-        cout << "Ma Tau: " << temp->getTrainCode() 
-             << " | Huong Chay: " << (temp->getDirection() == 1 ? "Nam (Di vao)" : "Bac (Di ra)") << "\n";
-        temp = temp->getNextTrain();
-    }
-}
-
 // ==================== THUẬT TOÁN TÁI LẬP LỊCH TRÁNH TÀU (MEET & PASS / SIDING) ====================
 void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
     for (TrainNode* t1 = head; t1 != nullptr; t1 = t1->getNextTrain()) {

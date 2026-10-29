@@ -118,7 +118,7 @@ void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, Tick
             sf::RectangleShape seatBox(sf::Vector2f(48.0f, 48.0f));
             seatBox.setPosition(sf::Vector2f(x, y));
 
-            bool available = ticketList.isSeatAvailable(&stationList, trainCode, carriageNo, i, fromSt, toSt);
+            bool available = ticketList.isSeatAvailable(&stationList, &trainList, trainCode, carriageNo, i, fromSt, toSt);
             seatBox.setFillColor(available ? sf::Color(46, 204, 113) : sf::Color(231, 76, 60));
             mapWin.draw(seatBox);
 
@@ -355,7 +355,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             {
                                 try {
                                     int cNo = stoi(strCNo), sNo = stoi(strSNo), fromSt = stoi(strFrom), toSt = stoi(strTo);
-                                    if (ticketList.isSeatAvailable(&stationList, trCode, cNo, sNo, fromSt, toSt)) {
+                                    if (ticketList.isSeatAvailable(&stationList, &trainList, trCode, cNo, sNo, fromSt, toSt)) {
                                         ticketList.addTicket(tID, trCode, cNo, sNo, fromSt, toSt);
                                         FileManager::saveTickets("tickets.txt", ticketList);
                                         outputLog = "-> [THANH CONG] DA DAT VE " + tID + " CHANG GA " + strFrom + " -> GA " + strTo;

@@ -383,8 +383,13 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             outputLog = "-> [THANH CONG] DA HOAN THANH DELAY PROPAGATION VA TAI LAP LICH TRANH TAU!";
                             break;
                         }
-                        case 12: {
-                            outputLog = "--> DANG MO CUA SO MO PHONG SFML 2D RUNNING ENGINE...\n";
+                        case 12: { // Hoặc case 9 tùy vào menu của bạn
+                            outputLog = "--> DANG KIEM TRA XUNG DOT & MO CUA SO MO PHONG SFML 2D...\n";
+    
+                            // Tự động quét và giải quyết xung đột khu gian + ray phụ trước khi mở mô phỏng
+                            trainList.resolveConflictAndScheduleSiding(&stationList);
+                            FileManager::saveTrains("trains.txt", trainList);
+
                             GraphicalSimulationEngine::runSFMLSimulation(&stationList, &trainList);
                             outputLog += "-> Da ket thuc phien mo phong va tro ve Dashboard!";
                             break;

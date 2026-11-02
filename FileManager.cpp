@@ -44,7 +44,7 @@ void FileManager::saveStations(const string& filename, const StationList& statio
         outFile << st->getStationID() << "|"
                 << st->getName() << "|"
                 << st->getKmMarker() << "|"
-                << st->getNumberOfTracks() << "\n";
+                << st->getMaxTracks() << "\n";
         st = st->getNextStation();
     }
     outFile.close();
@@ -68,13 +68,7 @@ void FileManager::loadTrains(const string& filename, TrainList& trainList) {
         if (token == "CARRIAGE") {
             if (currentTrain) {
                 string strNo, type, strSeats;
-                getline(ss, strNo, '|');
-                getline(ss, type, '|');
-                getline(ss, strSeats, '|');
-                // Gọi đúng thuộc tính hoặc phương thức thêm toa xe hiện có
-                if (currentTrain->getHeadCarriage() == nullptr) {
-                    currentTrain->addCarriage(stoi(strNo), type, stoi(strSeats));
-                } else {
+                if (getline(ss, strNo, '|') && getline(ss, type, '|') && getline(ss, strSeats, '|')) {
                     currentTrain->addCarriage(stoi(strNo), type, stoi(strSeats));
                 }
             }
@@ -82,19 +76,30 @@ void FileManager::loadTrains(const string& filename, TrainList& trainList) {
         else if (token == "STOP") {
             if (currentTrain) {
                 string strStID, strArr, strDep, strTrack;
-                getline(ss, strStID, '|');
-                getline(ss, strArr, '|');
-                getline(ss, strDep, '|');
-                getline(ss, strTrack, '|');
-                currentTrain->addSchedule(stoi(strStID), stoi(strArr), stoi(strDep), stoi(strTrack));
+                if (getline(ss, strStID, '|') && getline(ss, strArr, '|') &&
+                    getline(ss, strDep, '|') && getline(ss, strTrack, '|')) {
+                    currentTrain->addSchedule(stoi(strStID), stoi(strArr), stoi(strDep), stoi(strTrack));
+                }
             }
         } 
         else {
-            // Đọc dòng đầu tiên của Tàu: Mã Tàu | Hướng chạy
+            // Định dạng dòng đầu: Mã Tàu | Hướng chạy [ | Độ ưu tiên ]
             string trainCode = token;
-            string strDir;
+            string strDir, strPrio;
+
             if (getline(ss, strDir, '|')) {
-                trainList.addTrain(trainCode, stoi(strDir));
+                int prio = -1; // -1: TrainNode sẽ tự nhận diện theo tiền tố mã tàu
+                
+                // Đọc cột thứ 3 (nếu file có lưu sẵn độ ưu tiên)
+                if (getline(ss, strPrio, '|') && !strPrio.empty()) {
+                    try {
+                        prio = stoi(strPrio);
+                    } catch (...) {
+                        prio = -1;
+                    }
+                }
+
+                trainList.addTrain(trainCode, stoi(strDir), prio);
                 currentTrain = trainList.findTrainByCode(trainCode);
             }
         }
@@ -108,7 +113,10 @@ void FileManager::saveTrains(const string& filename, const TrainList& trainList)
 
     TrainNode* tr = trainList.getHead();
     while (tr != nullptr) {
-        outFile << tr->getTrainCode() << "|" << tr->getDirection() << "\n";
+        // Lưu kèm độ ưu tiên vào cột thứ 3: Mã Tàu | Hướng chạy | Độ ưu tiên
+        outFile << tr->getTrainCode() << "|" 
+                << tr->getDirection() << "|" 
+                << tr->getPriority() << "\n";
 
         CarriageNode* c = tr->getHeadCarriage();
         while (c != nullptr) {

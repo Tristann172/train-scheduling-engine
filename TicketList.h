@@ -1,22 +1,31 @@
 #pragma once
 #include <string>
-#include <vector>
 #include <iostream>
 #include "TicketNode.h"
+#include "LinkedList.h"
+#include "HashMap.h"
 
 class StationList;
 class TrainList;
 
 class TicketList {
 private:
-    TicketNode* head;
-    TicketNode* tail;
+    LinkedList<Ticket*> tickets;
+    HashMap<std::string, Ticket*, StringHash> ticketsByID;
+    unsigned long occupancyRevision;
+    mutable unsigned long builtOccupancyRevision;
+    mutable unsigned long builtTrainRevision;
+    mutable TrainList* occupancyTrainList;
+
+    void ensureSeatOccupancy(TrainList* trainList) const;
+    void updateSeatOccupancyForTicket(const TicketNode* ticket, int delta) const;
 
 public:
     TicketList();
     ~TicketList();
 
-    TicketNode* getHead() const { return head; }
+    LinkedList<Ticket*>::Node* getHead() const { return tickets.getHead(); }
+    int getSize() const { return tickets.getSize(); }
     void clear();
 
     void addTicket(const std::string& ticketID, const std::string& trainCode, 

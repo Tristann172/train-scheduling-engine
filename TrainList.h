@@ -1,15 +1,17 @@
 #pragma once
 #include <iostream>
 #include <string>
-#include <vector>
 #include "TrainNode.h"
+#include "LinkedList.h"
+#include "HashMap.h"
 
 class StationList;
 
 class TrainList {
 private:
-    TrainNode* head;
-    TrainNode* tail;
+    LinkedList<Train*> trains;
+    HashMap<std::string, Train*, StringHash> trainsByCode;
+    unsigned long structureRevision;
 
     // Thay thế vector bằng Circular Buffer tĩnh (tối đa 8 thông báo)
     static const int MAX_LOGS = 8;
@@ -25,7 +27,9 @@ public:
     ~TrainList();
     void clear();
 
-    TrainNode* getHead() const;
+    LinkedList<Train*>::Node* getHead() const;
+    int getSize() const { return trains.getSize(); }
+    unsigned long getStructureRevision() const { return structureRevision; }
     void addTrain(const std::string& code, int direction, int priority = -1);
     TrainNode* findTrainByCode(const std::string& code) const;
     void addCarriageToTrain(const std::string& code, int cNo, const std::string& type, int seats);

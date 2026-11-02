@@ -77,7 +77,7 @@ void FileManager::saveStations(const string& filename, const StationList& statio
         outFile << st->getStationID() << "|"
                 << st->getName() << "|"
                 << st->getKmMarker() << "|"
-                << st->getNumberOfTracks() << "\n";
+                << st->getMaxTracks() << "\n";
         st = st->getNextStation();
     }
     outFile.close();
@@ -101,13 +101,7 @@ void FileManager::loadTrains(const string& filename, TrainList& trainList) {
         if (token == "CARRIAGE") {
             if (currentTrain) {
                 string strNo, type, strSeats;
-                getline(ss, strNo, '|');
-                getline(ss, type, '|');
-                getline(ss, strSeats, '|');
-                // Gọi đúng thuộc tính hoặc phương thức thêm toa xe hiện có
-                if (currentTrain->getHeadCarriage() == nullptr) {
-                    currentTrain->addCarriage(stoi(strNo), type, stoi(strSeats));
-                } else {
+                if (getline(ss, strNo, '|') && getline(ss, type, '|') && getline(ss, strSeats, '|')) {
                     currentTrain->addCarriage(stoi(strNo), type, stoi(strSeats));
                 }
             }
@@ -115,19 +109,30 @@ void FileManager::loadTrains(const string& filename, TrainList& trainList) {
         else if (token == "STOP") {
             if (currentTrain) {
                 string strStID, strArr, strDep, strTrack;
-                getline(ss, strStID, '|');
-                getline(ss, strArr, '|');
-                getline(ss, strDep, '|');
-                getline(ss, strTrack, '|');
-                currentTrain->addSchedule(stoi(strStID), stoi(strArr), stoi(strDep), stoi(strTrack));
+                if (getline(ss, strStID, '|') && getline(ss, strArr, '|') &&
+                    getline(ss, strDep, '|') && getline(ss, strTrack, '|')) {
+                    currentTrain->addSchedule(stoi(strStID), stoi(strArr), stoi(strDep), stoi(strTrack));
+                }
             }
         } 
         else {
-            // Đọc dòng đầu tiên của Tàu: Mã Tàu | Hướng chạy
+            // Định dạng dòng đầu: Mã Tàu | Hướng chạy [ | Độ ưu tiên ]
             string trainCode = token;
-            string strDir;
+            string strDir, strPrio;
+
             if (getline(ss, strDir, '|')) {
-                trainList.addTrain(trainCode, stoi(strDir));
+                int prio = -1; // -1: TrainNode sẽ tự nhận diện theo tiền tố mã tàu
+                
+                // Đọc cột thứ 3 (nếu file có lưu sẵn độ ưu tiên)
+                if (getline(ss, strPrio, '|') && !strPrio.empty()) {
+                    try {
+                        prio = stoi(strPrio);
+                    } catch (...) {
+                        prio = -1;
+                    }
+                }
+
+                trainList.addTrain(trainCode, stoi(strDir), prio);
                 currentTrain = trainList.findTrainByCode(trainCode);
             }
         }
@@ -141,7 +146,10 @@ void FileManager::saveTrains(const string& filename, const TrainList& trainList)
 
     TrainNode* tr = trainList.getHead();
     while (tr != nullptr) {
-        outFile << tr->getTrainCode() << "|" << tr->getDirection() << "\n";
+        // Lưu kèm độ ưu tiên vào cột thứ 3: Mã Tàu | Hướng chạy | Độ ưu tiên
+        outFile << tr->getTrainCode() << "|" 
+                << tr->getDirection() << "|" 
+                << tr->getPriority() << "\n";
 
         CarriageNode* c = tr->getHeadCarriage();
         while (c != nullptr) {
@@ -198,7 +206,6 @@ void FileManager::saveTickets(const string& filename, const TicketList& ticketLi
     outFile.close();
 }
 
-
 ========================================
 File: .\FileManager.h
 ========================================
@@ -238,24 +245,119 @@ File: .\GraphicalSimulationEngine.cpp
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <cmath>
+#include <algorithm>
+#include <cstdint>
 
 using namespace std;
 
-// Hàm tính vị trí Km của tàu chuẩn xác cho mọi mốc thời gian
-static double calculateTrainKm(TrainNode* train, StationList* stationList, int currentMinute, int& trackUsedOut) {
-    trackUsedOut = 0;
-    StopScheduleNode* currStop = train->getHeadSchedule();
-    if (!currStop) return -1.0;
+// ==================== 1. BẢNG MÀU HIỆN ĐẠI (DRACULA & CONTROL ROOM DARK) ====================
+namespace Theme {
+    const sf::Color BgCanvas(18, 20, 29);           // #12141D - Nền chính tối sâu
+    const sf::Color BgGridLine(26, 29, 42);         // #1A1D2A - Đường lưới tọa độ mờ
+    const sf::Color HudPanelBg(28, 32, 46, 230);    // #1C202E - Nền khung HUD bán trong suốt
+    const sf::Color HudBorder(62, 70, 96);          // #3E4660 - Viền khung HUD
+    const sf::Color BallastBed(38, 42, 58);         // #262A3A - Nền đá dăm đường sắt
+    const sf::Color SleeperWood(65, 72, 98);        // #414862 - Thanh tà vẹt
+    const sf::Color MainRailSteel(165, 178, 198);   // #A5B2C6 - Thanh ray thép chính
+    const sf::Color SidingRail(98, 114, 164);       // #6272A4 - Thanh ray phụ
 
-    // Lấy thông tin ga đầu tiên và ga cuối cùng trong lịch trình
-    StopScheduleNode* firstStop = currStop;
-    StopScheduleNode* lastStop = currStop;
-    while (lastStop->getNextStop() != nullptr) {
-        lastStop = lastStop->getNextStop();
+    const sf::Color StationPlatform(45, 52, 74);    // #2D344A - Sân ga
+    const sf::Color StationCore(80, 250, 123);      // #50FA7B - Tâm nhà ga
+    const sf::Color SignalGreen(46, 213, 115);      // #2ED573 - Tín hiệu Xanh an toàn
+    const sf::Color SignalRed(255, 71, 87);         // #FF4757 - Tín hiệu Đỏ cảnh báo
+
+    const sf::Color TrainRunning(0, 229, 255);      // #00E5FF - Tàu đang chạy khu gian (Cyan)
+    const sf::Color TrainMainStop(255, 190, 11);    // #FFBE0B - Tàu đỗ ray chính (Amber)
+    const sf::Color TrainSidingWait(189, 147, 249); // #BD93F9 - Tàu tránh ray phụ (Purple)
+    const sf::Color TrainShadow(0, 0, 0, 140);      // Đổ bóng đoàn tàu
+
+    const sf::Color TextPrimary(248, 248, 242);     // #F8F8F2 - Chữ trắng sáng
+    const sf::Color TextSecondary(148, 163, 184);   // #94A3B8 - Chữ xám phụ trợ
+    const sf::Color AccentGold(241, 250, 140);      // #F1FA8C - Nhấn vàng sáng
+}
+
+// Cấu trúc lưu trạng thái tọa độ Y của từng tàu để nội suy Lerp (Không dùng std::map)
+struct TrainSmoothState {
+    string code;
+    float currentY;
+};
+
+// ==================== 2. CÁC HÀM ĐỒ HỌA PHỤ TRỢ (SHAPES & VERTEX ARRAY) ====================
+
+// Tạo hình chữ nhật bo góc bằng sf::ConvexShape
+static sf::ConvexShape createRoundedRect(float width, float height, float radius, unsigned int cornerPoints = 6) {
+    radius = std::min(radius, std::min(width, height) / 2.0f);
+    sf::ConvexShape shape;
+    shape.setPointCount(cornerPoints * 4);
+
+    const float PI = 3.14159265359f;
+    unsigned int idx = 0;
+
+    sf::Vector2f centers[4] = {
+        {width - radius, height - radius},
+        {radius, height - radius},
+        {radius, radius},
+        {width - radius, radius}
+    };
+
+    for (int c = 0; c < 4; ++c) {
+        float startAngle = c * (PI / 2.0f);
+        for (unsigned int i = 0; i < cornerPoints; ++i) {
+            float angle = startAngle + (static_cast<float>(i) / (cornerPoints - 1)) * (PI / 2.0f);
+            shape.setPoint(idx++, {
+                centers[c].x + radius * std::cos(angle),
+                centers[c].y + radius * std::sin(angle)
+            });
+        }
+    }
+    shape.setOrigin({width / 2.0f, height / 2.0f});
+    return shape;
+}
+
+// Thêm một hình chữ nhật (ghép từ 2 tam giác) vào VertexArray trong SFML 3.0
+static void appendQuadAsTriangles(sf::VertexArray& va, float x, float y, float w, float h, const sf::Color& color) {
+    sf::Vector2f p0(x, y), p1(x + w, y), p2(x + w, y + h), p3(x, y + h);
+    va.append(sf::Vertex{p0, color});
+    va.append(sf::Vertex{p1, color});
+    va.append(sf::Vertex{p2, color});
+    va.append(sf::Vertex{p0, color});
+    va.append(sf::Vertex{p2, color});
+    va.append(sf::Vertex{p3, color});
+}
+
+// Vẽ đoạn thẳng có độ dày tùy chỉnh (dùng cho ghi rẽ nhánh đường ray phụ)
+static void drawThickLine(sf::RenderWindow& window, sf::Vector2f p1, sf::Vector2f p2, float thickness, sf::Color color) {
+    sf::Vector2f dir = p2 - p1;
+    float length = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    if (length <= 0.001f) return;
+
+    sf::RectangleShape line({length, thickness});
+    line.setOrigin({0.0f, thickness / 2.0f});
+    line.setPosition(p1);
+    float angleRad = std::atan2(dir.y, dir.x);
+    line.setRotation(sf::radians(angleRad));
+    line.setFillColor(color);
+    window.draw(line);
+}
+
+// ==================== 3. HÀM TÍNH TỌA ĐỘ KM MƯỢT THEO THỜI GIAN THỰC ====================
+static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList, float currentMinute, int& trackUsedOut) {
+    trackUsedOut = 0;
+    StopScheduleNode* firstStop = train->getHeadSchedule();
+    if (!firstStop) return -1.0;
+
+    // Truy xuất trực tiếp ga cuối trong O(1) qua con trỏ tailSchedule
+    StopScheduleNode* lastStop = train->getTailSchedule();
+    if (!lastStop) {
+        lastStop = firstStop;
+        while (lastStop->getNextStop() != nullptr) {
+            lastStop = lastStop->getNextStop();
+        }
     }
 
-    // 1. Trường hợp thời gian chưa đến giờ tàu xuất phát -> Cho tàu chờ sẵn tại Ga Đầu
-    if (currentMinute < firstStop->getArrivalMinute()) {
+    // 1. Chưa tới giờ xuất phát -> Tàu chờ sẵn tại Ga Đầu
+    if (currentMinute < static_cast<float>(firstStop->getArrivalMinute())) {
         StationNode* st = stationList->findStationByID(firstStop->getStationID());
         if (st) {
             trackUsedOut = firstStop->getTrackUsed();
@@ -263,8 +365,8 @@ static double calculateTrainKm(TrainNode* train, StationList* stationList, int c
         }
     }
 
-    // 2. Trường hợp thời gian đã qua giờ tàu về ga cuối -> Cho tàu đỗ tại Ga Cuối
-    if (currentMinute > lastStop->getDepartureMinute()) {
+    // 2. Đã qua giờ về ga cuối -> Tàu đỗ tại Ga Cuối
+    if (currentMinute > static_cast<float>(lastStop->getDepartureMinute())) {
         StationNode* st = stationList->findStationByID(lastStop->getStationID());
         if (st) {
             trackUsedOut = lastStop->getTrackUsed();
@@ -272,68 +374,109 @@ static double calculateTrainKm(TrainNode* train, StationList* stationList, int c
         }
     }
 
-    // 3. Kiểm tra nếu tàu đang đỗ tại một ga trung gian
-    currStop = train->getHeadSchedule();
-    while (currStop != nullptr) {
-        if (currentMinute >= currStop->getArrivalMinute() && currentMinute <= currStop->getDepartureMinute()) {
-            StationNode* st = stationList->findStationByID(currStop->getStationID());
+    // 3. Kiểm tra tàu đang đỗ tại ga hoặc đang di chuyển giữa 2 ga (Khu gian)
+    for (StopScheduleNode* curr = firstStop; curr != nullptr; curr = curr->getNextStop()) {
+        float arr = static_cast<float>(curr->getArrivalMinute());
+        float dep = static_cast<float>(curr->getDepartureMinute());
+
+        if (currentMinute >= arr && currentMinute <= dep) {
+            StationNode* st = stationList->findStationByID(curr->getStationID());
             if (st) {
-                trackUsedOut = currStop->getTrackUsed();
+                trackUsedOut = curr->getTrackUsed();
                 return st->getKmMarker();
             }
         }
-        currStop = currStop->getNextStop();
-    }
 
-    // 4. Trường hợp tàu đang di chuyển giữa 2 ga (Khu gian)
-    currStop = train->getHeadSchedule();
-    while (currStop != nullptr && currStop->getNextStop() != nullptr) {
-        StopScheduleNode* nextStop = currStop->getNextStop();
-
-        if (currentMinute > currStop->getDepartureMinute() && currentMinute < nextStop->getArrivalMinute()) {
-            StationNode* st1 = stationList->findStationByID(currStop->getStationID());
-            StationNode* st2 = stationList->findStationByID(nextStop->getStationID());
-
-            if (st1 && st2) {
-                double km1 = st1->getKmMarker();
-                double km2 = st2->getKmMarker();
-                int t1 = currStop->getDepartureMinute();
-                int t2 = nextStop->getArrivalMinute();
-
-                double ratio = (double)(currentMinute - t1) / (t2 - t1);
-                return km1 + ratio * (km2 - km1);
+        StopScheduleNode* nextStop = curr->getNextStop();
+        if (nextStop != nullptr) {
+            float nextArr = static_cast<float>(nextStop->getArrivalMinute());
+            if (currentMinute > dep && currentMinute < nextArr) {
+                StationNode* st1 = stationList->findStationByID(curr->getStationID());
+                StationNode* st2 = stationList->findStationByID(nextStop->getStationID());
+                if (st1 && st2 && nextArr > dep) {
+                    trackUsedOut = 0; // 0: Đang chạy trên khu gian đơn
+                    double ratio = static_cast<double>(currentMinute - dep) / static_cast<double>(nextArr - dep);
+                    return st1->getKmMarker() + ratio * (st2->getKmMarker() - st1->getKmMarker());
+                }
             }
         }
-        currStop = currStop->getNextStop();
     }
 
     return -1.0;
 }
 
+// ==================== 4. VÒNG LẶP ĐỒ HỌA CHÍNH (GRAPHICAL SIMULATION ENGINE) ====================
 void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, TrainList* trainList) {
     if (!stationList || !trainList) return;
 
-    sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), 
-                            "PBL2: MO PHONG DIEU PHOI DUONG RAY & CHAY TAU (SFML GRAPHICS)");
+    sf::ContextSettings settings;
+    settings.antiAliasingLevel = 8;
+    sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
+                            "PBL2: MO PHONG DIEU PHOI DUONG RAY & CHAY TAU (SFML GRAPHICS)",
+                            sf::Style::Default, sf::State::Windowed, settings);
     window.setFramerateLimit(60);
 
     sf::Font font;
     if (!font.openFromFile("arial.ttf")) {
-        cout << "[Coi chung] Khong tim thay font 'arial.ttf'!\n";
+        cout << "[Canh bao] Khong tim thay font 'arial.ttf'!\n";
     }
 
-    double maxKm = 800.0;
-    StationNode* stLast = stationList->getHead();
-    while (stLast && stLast->getNextStation()) stLast = stLast->getNextStation();
-    if (stLast) maxKm = stLast->getKmMarker();
+    // Tìm mốc Km lớn nhất trên tuyến để chuẩn hóa tỷ lệ vẽ
+    double maxKm = 100.0;
+    for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+        if (st->getKmMarker() > maxKm) maxKm = st->getKmMarker();
+    }
+    if (maxKm <= 0.0) maxKm = 100.0;
 
-    float marginX = 100.0f;
-    float trackY = 300.0f;
-    float trackWidth = WINDOW_WIDTH - 2 * marginX;
+    const float marginX = 95.0f;
+    const float trackY = 245.0f;
+    const float trackWidth = WINDOW_WIDTH - 2.0f * marginX;
+    const float sidingSpacingY = 44.0f;
 
-    float currentMinute = 0.0f;
+    // Khởi tạo VertexArray cho Đường ray chính & Tà vẹt (Chỉ tốn 1 Draw Call mỗi khung hình)
+    sf::VertexArray mainTrackVA(sf::PrimitiveType::Triangles);
+    appendQuadAsTriangles(mainTrackVA, marginX - 20.0f, trackY - 8.0f, trackWidth + 40.0f, 16.0f, Theme::BallastBed);
+    for (float x = marginX - 10.0f; x <= marginX + trackWidth + 10.0f; x += 12.0f) {
+        appendQuadAsTriangles(mainTrackVA, x, trackY - 7.0f, 4.0f, 14.0f, Theme::SleeperWood);
+    }
+    appendQuadAsTriangles(mainTrackVA, marginX - 20.0f, trackY - 3.5f, trackWidth + 40.0f, 2.2f, Theme::MainRailSteel);
+    appendQuadAsTriangles(mainTrackVA, marginX - 20.0f, trackY + 1.5f, trackWidth + 40.0f, 2.2f, Theme::MainRailSteel);
+
+    // Mảng tĩnh quản lý hiệu ứng chuyển làn mượt (Smooth Y-Lerp) không dùng STL
+    static const int MAX_SMOOTH_TRAINS = 64;
+    TrainSmoothState smoothStates[MAX_SMOOTH_TRAINS];
+    int smoothCount = 0;
+
+    auto getSmoothY = [&](const string& code, float targetY, float dt) -> float {
+        for (int i = 0; i < smoothCount; ++i) {
+            if (smoothStates[i].code == code) {
+                float lerpFactor = std::min(1.0f, dt * 8.5f);
+                smoothStates[i].currentY += (targetY - smoothStates[i].currentY) * lerpFactor;
+                return smoothStates[i].currentY;
+            }
+        }
+        if (smoothCount < MAX_SMOOTH_TRAINS) {
+            smoothStates[smoothCount].code = code;
+            smoothStates[smoothCount].currentY = targetY;
+            smoothCount++;
+        }
+        return targetY;
+    };
+
+    // Tự động lấy mốc thời gian bắt đầu sớm nhất của các đoàn tàu (trừ hao 15 phút chuẩn bị)
+    int earliestMinute = 1440;
+    for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+        if (tr->getHeadSchedule()) {
+            earliestMinute = std::min(earliestMinute, tr->getHeadSchedule()->getArrivalMinute());
+        }
+    }
+    float startMinute = (earliestMinute < 1440) ? static_cast<float>(std::max(0, earliestMinute - 15)) : 0.0f;
+    float currentMinute = startMinute;
+
     float timeSpeed = 30.0f;
+    bool isPaused = false;
     sf::Clock deltaClock;
+    sf::Clock animClock;
 
     while (window.isOpen()) {
         while (const auto event = window.pollEvent()) {
@@ -342,104 +485,346 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
             }
             if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                 if (keyPressed->code == sf::Keyboard::Key::Space) {
-                    timeSpeed = (timeSpeed == 0.0f) ? 30.0f : 0.0f;
+                    isPaused = !isPaused;
+                } else if (keyPressed->code == sf::Keyboard::Key::Up) {
+                    timeSpeed = std::min(240.0f, timeSpeed + 15.0f);
+                } else if (keyPressed->code == sf::Keyboard::Key::Down) {
+                    timeSpeed = std::max(5.0f, timeSpeed - 15.0f);
+                } else if (keyPressed->code == sf::Keyboard::Key::Right) {
+                    currentMinute = std::min(1439.0f, currentMinute + 15.0f);
+                } else if (keyPressed->code == sf::Keyboard::Key::Left) {
+                    currentMinute = std::max(0.0f, currentMinute - 15.0f);
+                } else if (keyPressed->code == sf::Keyboard::Key::R) {
+                    currentMinute = startMinute;
+                } else if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                    window.close();
                 }
             }
         }
 
         float dt = deltaClock.restart().asSeconds();
-        currentMinute += timeSpeed * dt;
-        if (currentMinute > 1440.0f) currentMinute = 0.0f;
+        float animTime = animClock.getElapsedTime().asSeconds();
 
-        window.clear(sf::Color(30, 30, 35));
-
-        // 1. Đồng hồ thời gian thực
-        int hours = (int)currentMinute / 60;
-        int mins = (int)currentMinute % 60;
-        stringstream ss;
-        ss << "PBL2 MO PHONG DIEU PHOI TAU HOA | THOI GIAN: "
-           << setfill('0') << setw(2) << hours << ":" << setfill('0') << setw(2) << mins
-           << " | (SPACE: Tam dung/Chay tiep)";
-
-        sf::Text titleText(font, ss.str(), 20);
-        titleText.setFillColor(sf::Color::White);
-        titleText.setPosition(sf::Vector2f(marginX, 20.0f));
-        window.draw(titleText);
-
-        // 2. Đường ray chính (Main Track)
-        sf::RectangleShape mainTrack(sf::Vector2f(trackWidth, 6.0f));
-        mainTrack.setFillColor(sf::Color(150, 150, 150));
-        mainTrack.setPosition(sf::Vector2f(marginX, trackY));
-        window.draw(mainTrack);
-
-        // 3. Hiển thị Nhà ga & Đường ray phụ
-        StationNode* st = stationList->getHead();
-        while (st != nullptr) {
-            float posX = marginX + (float)(st->getKmMarker() / maxKm) * trackWidth;
-
-            sf::CircleShape stationCircle(10.0f);
-            stationCircle.setFillColor(sf::Color(46, 204, 113));
-            stationCircle.setOrigin(sf::Vector2f(10.0f, 10.0f));
-            stationCircle.setPosition(sf::Vector2f(posX, trackY + 3.0f));
-            window.draw(stationCircle);
-
-            sf::Text stName(font, st->getName() + "\n(" + to_string((int)st->getKmMarker()) + " km)", 12);
-            stName.setFillColor(sf::Color(241, 196, 15));
-            stName.setPosition(sf::Vector2f(posX - 25.0f, trackY + 20.0f));
-            window.draw(stName);
-
-            for (int t = 2; t <= st->getNumberOfTracks(); ++t) {
-                float offsetY = (t - 1) * 35.0f;
-                sf::RectangleShape sidingTrack(sf::Vector2f(80.0f, 4.0f));
-                sidingTrack.setFillColor(sf::Color(100, 100, 200));
-                sidingTrack.setOrigin(sf::Vector2f(40.0f, 2.0f));
-                sidingTrack.setPosition(sf::Vector2f(posX, trackY + 3.0f + offsetY));
-                window.draw(sidingTrack);
-            }
-
-            st = st->getNextStation();
+        if (!isPaused) {
+            currentMinute += timeSpeed * dt;
+            if (currentMinute >= 1440.0f) currentMinute = 0.0f;
         }
 
-        // 4. Vẽ các đoàn tàu chuyển động
-        TrainNode* train = trainList->getHead();
-        while (train != nullptr) {
-            int trackUsed = 0;
-            double currentKm = calculateTrainKm(train, stationList, (int)currentMinute, trackUsed);
+        window.clear(Theme::BgCanvas);
 
-            if (currentKm >= 0.0) {
-                float posX = marginX + (float)(currentKm / maxKm) * trackWidth;
-                float posY = trackY;
+        // ==================== A. VẼ LƯỚI TỌA ĐỘ NỀN (SUBTLE GRID) ====================
+        for (float gx = marginX; gx <= marginX + trackWidth; gx += 120.0f) {
+            sf::RectangleShape vLine({1.0f, 390.0f});
+            vLine.setPosition({gx, 105.0f});
+            vLine.setFillColor(Theme::BgGridLine);
+            window.draw(vLine);
+        }
 
-                if (trackUsed > 1) {
-                    posY += (trackUsed - 1) * 35.0f;
+        // ==================== B. VẼ NHÀ GA, ĐƯỜNG RAY PHỤ & ĐÈN TÍN HIỆU ====================
+        for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+            float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
+            int maxTracks = st->getMaxTracks();
+
+            // Kiểm tra có đoàn tàu nào đang dừng đỗ tại ga này không để bật đèn tín hiệu Đỏ
+            bool stationOccupied = false;
+            for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+                for (StopScheduleNode* sc = tr->getHeadSchedule(); sc != nullptr; sc = sc->getNextStop()) {
+                    if (sc->getStationID() == st->getStationID()) {
+                        if (currentMinute >= static_cast<float>(sc->getArrivalMinute()) &&
+                            currentMinute <= static_cast<float>(sc->getDepartureMinute())) {
+                            stationOccupied = true;
+                            break;
+                        }
+                    }
                 }
-
-                sf::RectangleShape trainRect(sf::Vector2f(45.0f, 20.0f));
-                trainRect.setOrigin(sf::Vector2f(22.5f, 10.0f));
-                trainRect.setPosition(sf::Vector2f(posX, posY + 3.0f));
-
-                if (trackUsed == 0) {
-                    trainRect.setFillColor(sf::Color(231, 76, 60));  // Đỏ: Chạy khu gian
-                } else if (trackUsed == 1) {
-                    trainRect.setFillColor(sf::Color(241, 196, 15)); // Vàng: Ray chính
-                } else {
-                    trainRect.setFillColor(sf::Color(155, 89, 182)); // Tím: Ray phụ
-                }
-                window.draw(trainRect);
-
-                sf::Text trainText(font, train->getTrainCode(), 12);
-                trainText.setFillColor(sf::Color::White);
-                trainText.setPosition(sf::Vector2f(posX - 14.0f, posY - 25.0f));
-                window.draw(trainText);
+                if (stationOccupied) break;
             }
 
-            train = train->getNextTrain();
+            // 1. Trục gióng dọc tại tâm nhà ga
+            float totalStationHeight = (maxTracks - 1) * sidingSpacingY + 75.0f;
+            sf::RectangleShape guideLine({2.0f, totalStationHeight});
+            guideLine.setPosition({posX - 1.0f, trackY - 35.0f});
+            guideLine.setFillColor(sf::Color(62, 70, 96, 110));
+            window.draw(guideLine);
+
+            // 2. Các đường ray phụ (Siding Tracks: từ Ray 2 đến maxTracks)
+            for (int t = 2; t <= maxTracks; ++t) {
+                float sidY = trackY + (t - 1) * sidingSpacingY;
+                float prevY = trackY + (t - 2) * sidingSpacingY;
+                float halfLen = 46.0f;
+
+                // Ghi rẽ nhánh trái & phải nối chéo lên ray phía trên
+                drawThickLine(window, {posX - halfLen - 18.0f, prevY}, {posX - halfLen, sidY}, 3.0f, Theme::SidingRail);
+                drawThickLine(window, {posX + halfLen, sidY}, {posX + halfLen + 18.0f, prevY}, 3.0f, Theme::SidingRail);
+
+                // Tà vẹt trên ray phụ
+                for (float sx = posX - halfLen; sx <= posX + halfLen; sx += 10.0f) {
+                    sf::RectangleShape slp({3.0f, 10.0f});
+                    slp.setOrigin({1.5f, 5.0f});
+                    slp.setPosition({sx, sidY});
+                    slp.setFillColor(Theme::SleeperWood);
+                    window.draw(slp);
+                }
+
+                // Thanh ray phụ
+                sf::RectangleShape sidingBar({halfLen * 2.0f, 3.5f});
+                sidingBar.setOrigin({halfLen, 1.75f});
+                sidingBar.setPosition({posX, sidY});
+                sidingBar.setFillColor(Theme::SidingRail);
+                window.draw(sidingBar);
+
+                // Nhãn ký hiệu ray phụ (R2, R3...)
+                sf::Text trkLabel(font, "R" + to_string(t), 10);
+                trkLabel.setFillColor(Theme::TextSecondary);
+                trkLabel.setPosition({posX - halfLen - 18.0f, sidY - 6.0f});
+                window.draw(trkLabel);
+            }
+
+            // 3. Vùng Sân ga (Station Platform Badge)
+            sf::ConvexShape platform = createRoundedRect(92.0f, 24.0f, 6.0f);
+            platform.setPosition({posX, trackY - 58.0f});
+            platform.setFillColor(Theme::StationPlatform);
+            platform.setOutlineThickness(1.5f);
+            platform.setOutlineColor(Theme::HudBorder);
+            window.draw(platform);
+
+            sf::Text stTitle(font, st->getName(), 12);
+            stTitle.setFillColor(Theme::AccentGold);
+            sf::FloatRect tb = stTitle.getLocalBounds();
+            stTitle.setPosition({posX - tb.size.x / 2.0f, trackY - 66.0f});
+            window.draw(stTitle);
+
+            sf::Text stSub(font, "ID:" + to_string(st->getStationID()) + " | " +
+                           to_string(static_cast<int>(st->getKmMarker())) + "km (" + to_string(maxTracks) + "R)", 10);
+            stSub.setFillColor(Theme::TextSecondary);
+            sf::FloatRect sb = stSub.getLocalBounds();
+            stSub.setPosition({posX - sb.size.x / 2.0f, trackY - 42.0f});
+            window.draw(stSub);
+
+            // 4. Đèn tín hiệu nhà ga (Xanh / Đỏ nhấp nháy)
+            sf::Color sigColor = stationOccupied ? Theme::SignalRed : Theme::SignalGreen;
+            float pulse = stationOccupied ? (0.55f + 0.45f * std::sin(animTime * 7.0f)) : 1.0f;
+
+            sf::CircleShape sigGlow(10.0f);
+            sigGlow.setOrigin({10.0f, 10.0f});
+            sigGlow.setPosition({posX + 38.0f, trackY - 22.0f});
+            sigGlow.setFillColor(sf::Color(sigColor.r, sigColor.g, sigColor.b, static_cast<uint8_t>(90 * pulse)));
+            window.draw(sigGlow);
+
+            sf::CircleShape sigLamp(4.5f);
+            sigLamp.setOrigin({4.5f, 4.5f});
+            sigLamp.setPosition({posX + 38.0f, trackY - 22.0f});
+            sigLamp.setFillColor(sf::Color(sigColor.r, sigColor.g, sigColor.b, static_cast<uint8_t>(255 * pulse)));
+            sigLamp.setOutlineThickness(1.5f);
+            sigLamp.setOutlineColor(sf::Color(20, 20, 25));
+            window.draw(sigLamp);
+        }
+
+        // ==================== C. VẼ ĐƯỜNG RAY CHÍNH & CÁC TÂM GA ====================
+        window.draw(mainTrackVA);
+
+        for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+            float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
+
+            sf::CircleShape outerNode(9.0f);
+            outerNode.setOrigin({9.0f, 9.0f});
+            outerNode.setPosition({posX, trackY});
+            outerNode.setFillColor(Theme::BgCanvas);
+            outerNode.setOutlineThickness(2.5f);
+            outerNode.setOutlineColor(Theme::StationCore);
+            window.draw(outerNode);
+
+            sf::CircleShape innerNode(4.0f);
+            innerNode.setOrigin({4.0f, 4.0f});
+            innerNode.setPosition({posX, trackY});
+            innerNode.setFillColor(Theme::StationCore);
+            window.draw(innerNode);
+        }
+
+        // ==================== D. VẼ CÁC ĐOÀN TÀU BO GÓC, ĐỔ BÓNG & NỘI SUY LERP ====================
+        for (TrainNode* train = trainList->getHead(); train != nullptr; train = train->getNextTrain()) {
+            int trackUsed = 0;
+            double currentKm = calculateTrainKmSmooth(train, stationList, currentMinute, trackUsed);
+
+            if (currentKm >= 0.0) {
+                float posX = marginX + static_cast<float>(currentKm / maxKm) * trackWidth;
+                float targetY = trackY + (trackUsed > 1 ? (trackUsed - 1) * sidingSpacingY : 0.0f);
+                float posY = getSmoothY(train->getTrainCode(), targetY, dt);
+
+                sf::Color bodyColor = Theme::TrainRunning;
+                if (trackUsed == 1) bodyColor = Theme::TrainMainStop;
+                else if (trackUsed > 1) bodyColor = Theme::TrainSidingWait;
+
+                // 1. Chùm đèn pha chiếu sáng hướng chạy khi tàu di chuyển trên khu gian
+                if (trackUsed == 0) {
+                    float dirSign = (train->getDirection() == 1) ? 1.0f : -1.0f;
+                    sf::ConvexShape beam;
+                    beam.setPointCount(3);
+                    beam.setPoint(0, {posX + dirSign * 26.0f, posY});
+                    beam.setPoint(1, {posX + dirSign * 72.0f, posY - 12.0f});
+                    beam.setPoint(2, {posX + dirSign * 72.0f, posY + 12.0f});
+                    beam.setFillColor(sf::Color(255, 250, 190, 55));
+                    window.draw(beam);
+                }
+
+                // 2. Lớp đổ bóng (Drop Shadow)
+                sf::ConvexShape shadowShape = createRoundedRect(54.0f, 22.0f, 7.0f);
+                shadowShape.setPosition({posX + 3.0f, posY + 4.5f});
+                shadowShape.setFillColor(Theme::TrainShadow);
+                window.draw(shadowShape);
+
+                // 3. Thân tàu bo góc (Rounded Train Body)
+                sf::ConvexShape trainShape = createRoundedRect(54.0f, 22.0f, 7.0f);
+                trainShape.setPosition({posX, posY});
+                trainShape.setFillColor(bodyColor);
+                trainShape.setOutlineThickness(1.5f);
+                trainShape.setOutlineColor(sf::Color(255, 255, 255, 210));
+                window.draw(trainShape);
+
+                // 4. Dải cửa sổ kính trên thân tàu
+                sf::ConvexShape windowStrip = createRoundedRect(36.0f, 6.0f, 2.5f);
+                windowStrip.setPosition({posX, posY - 3.5f});
+                windowStrip.setFillColor(sf::Color(18, 22, 34, 200));
+                window.draw(windowStrip);
+
+                // 5. Nhãn Mã tàu + Cấp ưu tiên (P1, P2, P3)
+                string code = train->getTrainCode();
+                string badgeStr = code + " [P" + to_string(train->getPriority()) + "]";
+                sf::Text trainLabel(font, badgeStr, 10);
+                trainLabel.setFillColor(sf::Color(15, 18, 25));
+                sf::FloatRect lb = trainLabel.getLocalBounds();
+                trainLabel.setPosition({posX - lb.size.x / 2.0f, posY - 0.5f});
+                window.draw(trainLabel);
+
+                // Nhãn hướng chạy nổi phía trên đoàn tàu
+                sf::Text dirTag(font, (train->getDirection() == 1 ? code + " ->" : "<- " + code), 11);
+                dirTag.setFillColor(Theme::TextPrimary);
+                sf::FloatRect db = dirTag.getLocalBounds();
+                dirTag.setPosition({posX - db.size.x / 2.0f, posY - 26.0f});
+                window.draw(dirTag);
+            }
+        }
+
+        // ==================== E. BẢNG ĐIỀU KHIỂN HUD (HEADS-UP DISPLAY OVERLAY) ====================
+        // 1. Thanh điều khiển Top Bar HUD
+        sf::ConvexShape topHud = createRoundedRect(WINDOW_WIDTH - 40.0f, 58.0f, 10.0f);
+        topHud.setPosition({WINDOW_WIDTH / 2.0f, 38.0f});
+        topHud.setFillColor(Theme::HudPanelBg);
+        topHud.setOutlineThickness(1.5f);
+        topHud.setOutlineColor(Theme::HudBorder);
+        window.draw(topHud);
+
+        int hours = (static_cast<int>(currentMinute) / 60) % 24;
+        int mins  = static_cast<int>(currentMinute) % 60;
+        int secs  = static_cast<int>((currentMinute - std::floor(currentMinute)) * 60.0f);
+
+        stringstream clockSS;
+        clockSS << setfill('0') << setw(2) << hours << ":"
+                << setfill('0') << setw(2) << mins << ":"
+                << setfill('0') << setw(2) << secs;
+
+        sf::Text clockText(font, "TIME: " + clockSS.str(), 20);
+        clockText.setFillColor(Theme::AccentGold);
+        clockText.setPosition({45.0f, 24.0f});
+        window.draw(clockText);
+
+        stringstream ctrlSS;
+        ctrlSS << (isPaused ? "[TAM DUNG]" : "[DANG CHAY]")
+               << "  |  TOC DO: " << static_cast<int>(timeSpeed) << "x"
+               << "  |  [SPACE] Pause  [UP/DOWN] Toc do  [LEFT/RIGHT] Tua +/-15p  [R] Reset  [ESC] Thoat";
+        sf::Text ctrlText(font, ctrlSS.str(), 13);
+        ctrlText.setFillColor(Theme::TextPrimary);
+        ctrlText.setPosition({255.0f, 28.0f});
+        window.draw(ctrlText);
+
+        // Chú giải màu sắc (Legend)
+        auto drawLegendItem = [&](float lx, float ly, sf::Color col, const string& textStr) {
+            sf::CircleShape dot(6.0f);
+            dot.setPosition({lx, ly + 2.0f});
+            dot.setFillColor(col);
+            window.draw(dot);
+
+            sf::Text lbl(font, textStr, 12);
+            lbl.setFillColor(Theme::TextSecondary);
+            lbl.setPosition({lx + 18.0f, ly});
+            window.draw(lbl);
+        };
+        drawLegendItem(45.0f, 76.0f, Theme::TrainRunning, "Chay khu gian (Cyan)");
+        drawLegendItem(215.0f, 76.0f, Theme::TrainMainStop, "Do Ray chinh R1 (Amber)");
+        drawLegendItem(400.0f, 76.0f, Theme::TrainSidingWait, "Tranh tau Ray phu R2..N (Purple)");
+        drawLegendItem(635.0f, 76.0f, Theme::SignalRed, "Den Do: Co tau chiem dung ga");
+        drawLegendItem(845.0f, 76.0f, Theme::SignalGreen, "Den Xanh: Ga thong thoang");
+
+        // 2. Khung Nhật ký Giải quyết Xung đột (Đọc trực tiếp từ Circular Buffer của TrainList)
+        float logW = 760.0f, logH = 220.0f;
+        sf::ConvexShape logPanel = createRoundedRect(logW, logH, 10.0f);
+        logPanel.setPosition({20.0f + logW / 2.0f, WINDOW_HEIGHT - 20.0f - logH / 2.0f});
+        logPanel.setFillColor(Theme::HudPanelBg);
+        logPanel.setOutlineThickness(1.5f);
+        logPanel.setOutlineColor(Theme::HudBorder);
+        window.draw(logPanel);
+
+        sf::Text logTitle(font, "NHAT KY DIEU PHOI & GIAI QUYET XUNG DOT (MEET & PASS - CIRCULAR BUFFER LOGS)", 13);
+        logTitle.setFillColor(Theme::AccentGold);
+        logTitle.setPosition({38.0f, WINDOW_HEIGHT - logH - 8.0f});
+        window.draw(logTitle);
+
+        int totalLogs = trainList->getLogCount();
+        if (totalLogs == 0) {
+            sf::Text emptyLog(font, "-> He thong dang van hanh on dinh. Chua phat sinh xung dot moi hoac da giai toa xong.", 12);
+            emptyLog.setFillColor(Theme::TextSecondary);
+            emptyLog.setPosition({42.0f, WINDOW_HEIGHT - logH + 22.0f});
+            window.draw(emptyLog);
+        } else {
+            float ly = WINDOW_HEIGHT - logH + 18.0f;
+            for (int i = 0; i < totalLogs; ++i) {
+                sf::Text logLine(font, ">> " + trainList->getLog(i), 12);
+                logLine.setFillColor(Theme::TextPrimary);
+                logLine.setPosition({42.0f, ly});
+                window.draw(logLine);
+                ly += 21.0f;
+            }
+        }
+
+        // 3. Bảng Giám sát Trạng thái Đoàn tàu Thời gian thực (Bottom-Right Telemetry Panel)
+        float teleW = 535.0f, teleH = 220.0f;
+        float teleCenterX = WINDOW_WIDTH - 20.0f - teleW / 2.0f;
+        sf::ConvexShape telePanel = createRoundedRect(teleW, teleH, 10.0f);
+        telePanel.setPosition({teleCenterX, WINDOW_HEIGHT - 20.0f - teleH / 2.0f});
+        telePanel.setFillColor(Theme::HudPanelBg);
+        telePanel.setOutlineThickness(1.5f);
+        telePanel.setOutlineColor(Theme::HudBorder);
+        window.draw(telePanel);
+
+        float teleLeft = WINDOW_WIDTH - 20.0f - teleW + 18.0f;
+        sf::Text teleTitle(font, "BANG GIAM SAT TRANG THAI DOAN TAU (LIVE TELEMETRY)", 13);
+        teleTitle.setFillColor(Theme::StationCore);
+        teleTitle.setPosition({teleLeft, WINDOW_HEIGHT - teleH - 8.0f});
+        window.draw(teleTitle);
+
+        float ty = WINDOW_HEIGHT - teleH + 18.0f;
+        for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+            int trk = 0;
+            double km = calculateTrainKmSmooth(tr, stationList, currentMinute, trk);
+            string statusStr = (trk == 0) ? "Chay khu gian" : (trk == 1 ? "Do Ray Chinh (R1)" : "Tranh Ray Phu (R" + to_string(trk) + ")");
+
+            stringstream rowSS;
+            rowSS << left << setw(6) << tr->getTrainCode()
+                  << " | Uu tien P" << tr->getPriority()
+                  << " | " << (tr->getDirection() == 1 ? "Nam" : "Bac")
+                  << " | Km " << setw(5) << static_cast<int>(std::max(0.0, km))
+                  << " | " << statusStr;
+
+            sf::Text rowTxt(font, rowSS.str(), 12);
+            rowTxt.setFillColor(trk > 1 ? Theme::TrainSidingWait : (trk == 1 ? Theme::TrainMainStop : Theme::TrainRunning));
+            rowTxt.setPosition({teleLeft, ty});
+            window.draw(rowTxt);
+            ty += 22.0f;
         }
 
         window.display();
     }
 }
-
 
 ========================================
 File: .\GraphicalSimulationEngine.h
@@ -455,14 +840,13 @@ class TrainList;
 
 class GraphicalSimulationEngine {
 private:
-    static const int WINDOW_WIDTH = 1280;
-    static const int WINDOW_HEIGHT = 720;
+    static const unsigned int WINDOW_WIDTH = 1360;
+    static const unsigned int WINDOW_HEIGHT = 768;
 
 public:
-    // Khai báo hàm chạy mô phỏng chạy tàu & đường ray 2D bằng SFML
+    // Chạy mô phỏng điều phối chạy tàu & đường ray 2D bằng SFML
     static void runSFMLSimulation(StationList* stationList, TrainList* trainList);
 };
-
 
 ========================================
 File: .\GuiMenu.cpp
@@ -483,30 +867,44 @@ File: .\GuiMenu.cpp
 
 #include <iostream>
 #include <sstream>
+#include <iomanip>
+#include <algorithm>
 
 using namespace std;
 
-// Show Input Dialog Pop-up
+// ==================== 1. HỘP THOẠI NHẬP LIỆU HIỆN ĐẠI (MODAL INPUT DIALOG) ====================
 bool GuiMenu::showInputDialog(const string& title, const string& promptLabel, string& outputValue, sf::Font& font) {
-    sf::RenderWindow dialog(sf::VideoMode({480, 220}), title, sf::Style::Titlebar | sf::Style::Close);
+    sf::RenderWindow dialog(sf::VideoMode({520, 230}), title, sf::Style::Titlebar | sf::Style::Close);
     dialog.setFramerateLimit(60);
 
     string inputText = "";
-    sf::Text promptText(font, promptLabel, 14);
-    promptText.setFillColor(sf::Color::White);
-    promptText.setPosition(sf::Vector2f(30.0f, 25.0f));
 
-    sf::RectangleShape inputBox(sf::Vector2f(420.0f, 40.0f));
-    inputBox.setPosition(sf::Vector2f(30.0f, 60.0f));
-    inputBox.setFillColor(sf::Color(20, 20, 25));
+    sf::RectangleShape topBanner(sf::Vector2f(520.0f, 38.0f));
+    topBanner.setFillColor(GuiTheme::CardBg);
+    sf::Text bannerTitle(font, "NHAP THONG TIN HE THONG", 13);
+    bannerTitle.setFillColor(GuiTheme::AccentGold);
+    bannerTitle.setPosition(sf::Vector2f(20.0f, 10.0f));
+
+    sf::Text promptText(font, promptLabel, 14);
+    promptText.setFillColor(GuiTheme::TextLight);
+    promptText.setPosition(sf::Vector2f(25.0f, 52.0f));
+
+    sf::RectangleShape inputBox(sf::Vector2f(470.0f, 42.0f));
+    inputBox.setPosition(sf::Vector2f(25.0f, 82.0f));
+    inputBox.setFillColor(GuiTheme::BgMain);
     inputBox.setOutlineThickness(2.0f);
-    inputBox.setOutlineColor(sf::Color(52, 152, 219));
+    inputBox.setOutlineColor(GuiTheme::AccentCyan);
 
     sf::Text typedText(font, "", 16);
-    typedText.setFillColor(sf::Color(241, 196, 15));
-    typedText.setPosition(sf::Vector2f(40.0f, 68.0f));
+    typedText.setFillColor(GuiTheme::AccentGold);
+    typedText.setPosition(sf::Vector2f(35.0f, 92.0f));
 
-    GuiButton btnConfirm(135.0f, 130.0f, 210.0f, 40.0f, "XAC NHAN (ENTER)", font, 99);
+    GuiButton btnConfirm;
+    btnConfirm.init(75.0f, 150.0f, 175.0f, 40.0f, "XAC NHAN (ENTER)", font, 99, false);
+    GuiButton btnCancel;
+    btnCancel.init(270.0f, 150.0f, 175.0f, 40.0f, "HUY BO (ESC)", font, 98, true);
+
+    sf::Clock blinkClock;
 
     while (dialog.isOpen()) {
         sf::Vector2i mousePos = sf::Mouse::getPosition(dialog);
@@ -517,17 +915,25 @@ bool GuiMenu::showInputDialog(const string& title, const string& promptLabel, st
                 dialog.close();
                 return false;
             }
+            if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                    dialog.close();
+                    return false;
+                }
+            }
             if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
                 if (mouseBtn->button == sf::Mouse::Button::Left) mouseClicked = true;
             }
             if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
                 uint32_t unicode = textEntered->unicode;
-                if (unicode == 8) {
+                if (unicode == 8) { // Backspace
                     if (!inputText.empty()) inputText.pop_back();
-                } else if (unicode == 13) {
-                    outputValue = inputText;
-                    dialog.close();
-                    return true;
+                } else if (unicode == 13) { // Enter
+                    if (!inputText.empty()) {
+                        outputValue = inputText;
+                        dialog.close();
+                        return true;
+                    }
                 } else if (unicode >= 32 && unicode <= 126) {
                     inputText += static_cast<char>(unicode);
                 }
@@ -535,91 +941,235 @@ bool GuiMenu::showInputDialog(const string& title, const string& promptLabel, st
         }
 
         btnConfirm.updateHover(mousePos);
-        if (btnConfirm.isClicked(mousePos, mouseClicked)) {
+        btnCancel.updateHover(mousePos);
+
+        if (btnConfirm.isClicked(mouseClicked) && !inputText.empty()) {
             outputValue = inputText;
             dialog.close();
             return true;
         }
+        if (btnCancel.isClicked(mouseClicked)) {
+            dialog.close();
+            return false;
+        }
 
-        typedText.setString(inputText + "|");
-        dialog.clear(sf::Color(35, 37, 42));
+        bool showCursor = (static_cast<int>(blinkClock.getElapsedTime().asSeconds() * 2.0f) % 2 == 0);
+        typedText.setString(inputText + (showCursor ? "_" : ""));
+
+        dialog.clear(GuiTheme::PanelBg);
+        dialog.draw(topBanner);
+        dialog.draw(bannerTitle);
         dialog.draw(promptText);
         dialog.draw(inputBox);
         dialog.draw(typedText);
         btnConfirm.draw(dialog);
+        btnCancel.draw(dialog);
         dialog.display();
     }
     return false;
 }
 
-// SeatMap UI
-void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font) {
+// ==================== 2. SƠ ĐỒ GHẾ 2D TƯƠNG TÁC (CLICK ĐỂ ĐẶT VÉ TRỰC TIẾP) ====================
+void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font, string& outputLog) {
     string trainCode, strCarriage, strFrom, strTo;
-    if (!showInputDialog("PBL2: CHON TAU TRACUU SEAT MAP", "Nhap Ma Tau (Vi du: SE1):", trainCode, font) ||
-        !showInputDialog("PBL2: CHON TOA TRACUU SEAT MAP", "Nhap So Toa (Vi du: 1):", strCarriage, font) ||
-        !showInputDialog("PBL2: PHAN DOAN CHANG", "Nhap ID Ga Di (Vi du: 101):", strFrom, font) ||
-        !showInputDialog("PBL2: PHAN DOAN CHANG", "Nhap ID Ga Den (Vi du: 105):", strTo, font)) return;
+    if (!showInputDialog("SEAT MAP 2D", "1/4. Nhap Ma Tau (Vi du: SE1):", trainCode, font) ||
+        !showInputDialog("SEAT MAP 2D", "2/4. Nhap So Toa (Vi du: 1):", strCarriage, font) ||
+        !showInputDialog("SEAT MAP 2D", "3/4. Nhap ID Ga Di (Vi du: 101):", strFrom, font) ||
+        !showInputDialog("SEAT MAP 2D", "4/4. Nhap ID Ga Den (Vi du: 105):", strTo, font)) return;
 
-    int carriageNo = stoi(strCarriage), fromSt = stoi(strFrom), toSt = stoi(strTo);
+    int carriageNo = 0, fromSt = 0, toSt = 0;
+    try {
+        carriageNo = stoi(strCarriage);
+        fromSt = stoi(strFrom);
+        toSt = stoi(strTo);
+    } catch (...) {
+        outputLog = "-> [LOI NHAP LIEU] So toa va ID ga phai la so nguyen hop le!";
+        return;
+    }
+
     TrainNode* train = trainList.findTrainByCode(trainCode);
-    if (!train) return;
+    if (!train) {
+        outputLog = "-> [LOI TRA CUU] Khong tim thay doan tau co ma: " + trainCode;
+        return;
+    }
 
     int totalSeats = train->getCarriageSeats(carriageNo);
-    if (totalSeats == 0) return;
+    if (totalSeats <= 0 || totalSeats > 128) {
+        outputLog = "-> [LOI TOA XE] Toa so " + to_string(carriageNo) + " khong ton tai tren tau " + trainCode + "!";
+        return;
+    }
 
-    sf::RenderWindow mapWin(sf::VideoMode({800, 500}), "PBL2: SO DO GHE NGOI (SEAT MAP MATRIX)", sf::Style::Titlebar | sf::Style::Close);
+    // Gọi hàm checkCarriageSeats (O(M)) trả về bool để chặn ngay nếu sai hướng hoặc không qua ga
+    bool seatFree[129];
+    if (!ticketList.checkCarriageSeats(&stationList, &trainList, trainCode, carriageNo, fromSt, toSt, seatFree, totalSeats)) {
+        outputLog = "-> [LOI HANH TRINH] Tau " + trainCode + " KHONG phuc vu chang Ga " + to_string(fromSt) +
+                    " -> Ga " + to_string(toSt) + "\n   (Nguyen nhan: Nhap nguoc chieu chay cua tau hoac tau khong dung tai ga nay).";
+        return;
+    }
+
+    StationNode* stFromNode = stationList.findStationByID(fromSt);
+    StationNode* stToNode   = stationList.findStationByID(toSt);
+    string routeDesc = (stFromNode ? stFromNode->getName() : to_string(fromSt)) + " -> " +
+                       (stToNode ? stToNode->getName() : to_string(toSt));
+
+    sf::RenderWindow mapWin(sf::VideoMode({880, 520}), "PBL2: SO DO GHE NGOI TUONG TAC (INTERACTIVE SEAT MAP 2D)", sf::Style::Titlebar | sf::Style::Close);
     mapWin.setFramerateLimit(60);
 
+    string statusBanner = "MEO: Click chuot trai truc tiep vao o GHE XANH de dat ve nhanh cho ghe do!";
+
     while (mapWin.isOpen()) {
+        sf::Vector2i mousePos = sf::Mouse::getPosition(mapWin);
+        bool mouseClicked = false;
+
         while (const auto event = mapWin.pollEvent()) {
             if (event->is<sf::Event::Closed>()) mapWin.close();
+            if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
+                if (mouseBtn->button == sf::Mouse::Button::Left) mouseClicked = true;
+            }
         }
-        mapWin.clear(sf::Color(30, 30, 35));
 
-        sf::Text header(font, "SO DO GHE TOA " + to_string(carriageNo) + " - TAU " + trainCode + " (CHANG " + to_string(fromSt) + " -> " + to_string(toSt) + ")", 16);
-        header.setFillColor(sf::Color(241, 196, 15));
-        header.setPosition(sf::Vector2f(30.0f, 20.0f));
+        mapWin.clear(GuiTheme::BgMain);
+
+        // Header thông tin toa tàu
+        sf::Text header(font, "SO DO GHE TOA " + to_string(carriageNo) + " | TAU " + trainCode +
+                        " (P" + to_string(train->getPriority()) + ") | CHANG: " + routeDesc, 16);
+        header.setFillColor(GuiTheme::AccentGold);
+        header.setPosition(sf::Vector2f(35.0f, 20.0f));
         mapWin.draw(header);
 
-        for (int i = 1; i <= totalSeats; ++i) {
-            int row = (i - 1) % 4, col = (i - 1) / 4;
-            float x = 50.0f + col * 60.0f, y = 80.0f + row * 60.0f + (row >= 2 ? 20.0f : 0.0f);
+        // Chú giải (Legend)
+        int freeCount = 0;
+        for (int i = 1; i <= totalSeats; ++i) if (seatFree[i]) freeCount++;
 
-            sf::RectangleShape seatBox(sf::Vector2f(48.0f, 48.0f));
+        sf::Text subHeader(font, "Tong so ghe: " + to_string(totalSeats) +
+                           "  |  Con trong (Xanh): " + to_string(freeCount) +
+                           "  |  Da dat (Do): " + to_string(totalSeats - freeCount), 13);
+        subHeader.setFillColor(GuiTheme::AccentCyan);
+        subHeader.setPosition(sf::Vector2f(35.0f, 48.0f));
+        mapWin.draw(subHeader);
+
+        // Khung thân toa tàu (Coach Hull)
+        sf::RectangleShape carriageHull(sf::Vector2f(810.0f, 330.0f));
+        carriageHull.setPosition(sf::Vector2f(35.0f, 85.0f));
+        carriageHull.setFillColor(GuiTheme::PanelBg);
+        carriageHull.setOutlineThickness(2.0f);
+        carriageHull.setOutlineColor(GuiTheme::Border);
+        mapWin.draw(carriageHull);
+
+        // Lối đi giữa toa (Center Aisle)
+        sf::RectangleShape aisle(sf::Vector2f(790.0f, 26.0f));
+        aisle.setPosition(sf::Vector2f(45.0f, 237.0f));
+        aisle.setFillColor(GuiTheme::BgMain);
+        mapWin.draw(aisle);
+
+        sf::Text aisleText(font, "--- LOI DI GIUA TOA TAU (AISLE) ---", 11);
+        aisleText.setFillColor(GuiTheme::TextMuted);
+        aisleText.setPosition(sf::Vector2f(330.0f, 243.0f));
+        mapWin.draw(aisleText);
+
+        // Vẽ ma trận ghế và bắt sự kiện click đặt vé trực tiếp
+        int hoveredSeat = -1;
+        for (int i = 1; i <= totalSeats; ++i) {
+            int row = (i - 1) % 4;
+            int col = (i - 1) / 4;
+            float x = 55.0f + col * 48.0f;
+            float y = 105.0f + row * 62.0f + (row >= 2 ? 32.0f : 0.0f);
+
+            sf::RectangleShape seatBox(sf::Vector2f(40.0f, 46.0f));
             seatBox.setPosition(sf::Vector2f(x, y));
 
-            bool available = ticketList.isSeatAvailable(&stationList, trainCode, carriageNo, i, fromSt, toSt);
-            seatBox.setFillColor(available ? sf::Color(46, 204, 113) : sf::Color(231, 76, 60));
+            bool available = seatFree[i];
+            bool isHover = seatBox.getGlobalBounds().contains(sf::Vector2f(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y)));
+            if (isHover) hoveredSeat = i;
+
+            seatBox.setFillColor(available ? sf::Color(39, 174, 96) : sf::Color(192, 57, 43));
+            seatBox.setOutlineThickness(isHover ? 2.5f : 1.0f);
+            seatBox.setOutlineColor(isHover ? GuiTheme::AccentGold : sf::Color(20, 20, 25));
             mapWin.draw(seatBox);
+
+            // Gối tựa đầu ghế
+            sf::RectangleShape headrest(sf::Vector2f(8.0f, 34.0f));
+            headrest.setPosition(sf::Vector2f(x + 30.0f, y + 6.0f));
+            headrest.setFillColor(available ? sf::Color(46, 204, 113) : sf::Color(231, 76, 60));
+            mapWin.draw(headrest);
 
             sf::Text seatNum(font, to_string(i), 12);
             seatNum.setFillColor(sf::Color::White);
-            seatNum.setPosition(sf::Vector2f(x + 15.0f, y + 15.0f));
+            seatNum.setPosition(sf::Vector2f(x + 8.0f, y + 14.0f));
             mapWin.draw(seatNum);
+
+            // Nếu người dùng click vào ghế trống -> Mở hộp thoại nhập Mã Vé để đặt luôn!
+            if (isHover && mouseClicked && available) {
+                string newTicketID;
+                if (showInputDialog("DAT VE NHANH TREN SO DO GHE",
+                                    "Nhap Ma Ve moi cho Ghe so " + to_string(i) + " (VD: TCK305):",
+                                    newTicketID, font)) 
+                {
+                    if (ticketList.findTicketByID(newTicketID) != nullptr) {
+                        statusBanner = "[LOI] Ma ve " + newTicketID + " da ton tai trong he thong!";
+                    } else if (ticketList.isSeatAvailable(&stationList, &trainList, trainCode, carriageNo, i, fromSt, toSt)) {
+                        ticketList.addTicket(newTicketID, trainCode, carriageNo, i, fromSt, toSt);
+                        FileManager::saveTickets("tickets.txt", ticketList);
+                        seatFree[i] = false; // Cập nhật ngay trên giao diện
+                        statusBanner = "[THANH CONG] Da phat hanh ve " + newTicketID + " cho Ghe " + to_string(i) + "!";
+                        outputLog = "-> [SEAT MAP BOOKING] Da dat ve " + newTicketID + " (Tau " + trainCode +
+                                    ", Toa " + to_string(carriageNo) + ", Ghe " + to_string(i) + ")";
+                    }
+                }
+            }
         }
+
+        // Thanh trạng thái dưới đáy cửa sổ Seat Map
+        sf::RectangleShape footerBox(sf::Vector2f(810.0f, 45.0f));
+        footerBox.setPosition(sf::Vector2f(35.0f, 435.0f));
+        footerBox.setFillColor(GuiTheme::CardBg);
+        footerBox.setOutlineThickness(1.0f);
+        footerBox.setOutlineColor(GuiTheme::Border);
+        mapWin.draw(footerBox);
+
+        string hoverInfo = (hoveredSeat != -1)
+            ? ("Dang chon Ghe so " + to_string(hoveredSeat) + ": " + (seatFree[hoveredSeat] ? "CON TRONG (Click de dat)" : "DA CO KHACH DAT"))
+            : statusBanner;
+        sf::Text footerTxt(font, hoverInfo, 13);
+        footerTxt.setFillColor(GuiTheme::AccentGold);
+        footerTxt.setPosition(sf::Vector2f(50.0f, 448.0f));
+        mapWin.draw(footerTxt);
+
         mapWin.display();
     }
 }
 
-// Apply Delay UI
-void GuiMenu::applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font) {
+// ==================== 3. GIAO DIỆN LAN TRUYỀN TRỄ & TÁI LẬP LỊCH ====================
+void GuiMenu::applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font, string& outputLog) {
     string trainCode, strStID, strDelay;
-    if (showInputDialog("DELAY PROPAGATION", "Nhap Ma Tau bi tre (Vi du: SE1):", trainCode, font) &&
-        showInputDialog("DELAY PROPAGATION", "Nhap ID Ga bat dau bi tre (Vi du: 102):", strStID, font) &&
-        showInputDialog("DELAY PROPAGATION", "Nhap So phut tre (Vi du: 30):", strDelay, font)) 
+    if (showInputDialog("DELAY PROPAGATION", "1/3. Nhap Ma Tau bi su co tre (Vi du: SE1):", trainCode, font) &&
+        showInputDialog("DELAY PROPAGATION", "2/3. Nhap ID Ga bat dau bi tre (Vi du: 102):", strStID, font) &&
+        showInputDialog("DELAY PROPAGATION", "3/3. Nhap So phut tre (Vi du: 30):", strDelay, font)) 
     {
         try {
-            // Gọi hàm xử lý 2 bước: Dời giờ + Tái lập lịch tránh tàu
-            if (trainList.applyDelayAndReschedule(trainCode, stoi(strStID), stoi(strDelay), &stationList)) {
+            int stID = stoi(strStID);
+            int delayMins = stoi(strDelay);
+            if (trainList.applyDelayAndReschedule(trainCode, stID, delayMins, &stationList)) {
                 FileManager::saveTrains("trains.txt", trainList);
+                outputLog = "=== KET QUA LAN TRUYEN TRE & TAI LAP LICH (MULTI-PASS) ===\n\n";
+                outputLog += " -> Da cong them " + to_string(delayMins) + " phut cho tau " + trainCode + " tu Ga ID " + to_string(stID) + ".\n";
+                outputLog += " -> Da kich hoat thuat toan Multi-pass quet toan tuyen (xet Priority & maxTracks).\n\n";
+                outputLog += "Cac xung dot vua duoc giai quyet:\n";
+                for (int i = 0; i < trainList.getLogCount(); ++i) {
+                    outputLog += "   + " + trainList.getLog(i) + "\n";
+                }
+            } else {
+                outputLog = "-> [THAT BAI] Khong tim thay Tau " + trainCode + " hoac Ga " + strStID + " khong nam trong lich trinh!";
             }
-        } catch (...) {}
+        } catch (...) {
+            outputLog = "-> [LOI] ID Ga va So phut tre phai la so nguyen!";
+        }
     }
 }
 
-// MAIN DASHBOARD VOI GIAO DIEN NHOM KHOA HOC (ACCORDION MENU)
+// ==================== 4. MAIN DASHBOARD CONTROL CENTER ====================
 void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketList& ticketList) {
-    sf::RenderWindow window(sf::VideoMode({1280, 750}), "PBL2: HE THONG QUAN LY LICH TRINH & DIEU PHOI TAU HOA");
+    sf::RenderWindow window(sf::VideoMode({1360, 768}), "PBL2: TRUNG TAM DIEU HANH & QUAN LY DUONG SAT DON (CONTROL CENTER)");
     window.setFramerateLimit(60);
 
     sf::Font font;
@@ -627,49 +1177,56 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
         cout << "[Loi] Khong tim thay font 'arial.ttf'!\n";
     }
 
-    float startX = 30.0f, startY = 80.0f, btnW = 350.0f, mainH = 42.0f, subH = 32.0f, gapY = 8.0f;
-    vector<MenuGroup> menuGroups;
+    // Tự động chạy giải tỏa xung đột ngay khi mở Dashboard
+    trainList.resolveConflictAndScheduleSiding(&stationList);
 
-    // 1. Nhóm Ga
-    MenuGroup g1(startX, 0, btnW, mainH, "[1] QUAN LY GA DONG SAT", font, 100);
-    g1.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "1.1. Hien thi danh sach cac Ga", font, 1));
-    g1.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "1.2. Them Ga moi tao tuyen", font, 2));
-    g1.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "1.3. Tim kiem Ga theo ID", font, 3));
-    menuGroups.push_back(g1);
+    const float startX = 25.0f, startY = 105.0f, btnW = 340.0f, mainH = 40.0f, subH = 31.0f, gapY = 7.0f;
+    static const int NUM_GROUPS = 5;
+    MenuGroup menuGroups[NUM_GROUPS];
 
-    // 2. Nhóm Tàu
-    MenuGroup g2(startX, 0, btnW, mainH, "[2] QUAN LY TAU & LICH TRINH", font, 200);
-    g2.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "2.1. Hien thi danh sach Tau", font, 4));
-    g2.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "2.2. Tra cuu chi tiet Toa & Lịch", font, 5));
-    g2.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "2.3. Them chuyen Tau moi", font, 6));
-    g2.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "2.4. Cap nhat tre (Delay Propagate)", font, 11));
-    menuGroups.push_back(g2);
+    // 1. Nhóm Quản lý Hạ tầng Ga (maxTracks)
+    menuGroups[0].initGroup(startX, 0, btnW, mainH, "[1] QUAN LY HA TANG GA (MAX TRACKS)", font, 100);
+    menuGroups[0].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "1.1. Danh sach Ga & Nang luc Ray (maxTracks)", font, 1);
+    menuGroups[0].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "1.2. Them Ga moi vao tuyen", font, 2);
+    menuGroups[0].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "1.3. Tra cuu chi tiet Ga theo ID", font, 3);
+    menuGroups[0].isExpanded = true; // Mặc định mở nhóm 1
+    menuGroups[0].mainCategoryBtn.setSelected(true);
 
-    // 3. Nhóm Vé
-    MenuGroup g3(startX, 0, btnW, mainH, "[3] QUAN LY VE & GHE NGOI", font, 300);
-    g3.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "3.1. Danh sach ve da phat hanh", font, 7));
-    g3.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "3.2. Dat ve (Segment Booking)", font, 8));
-    g3.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "3.3. Huy ve da phat hanh", font, 9));
-    g3.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "3.4. In so do ghe (Seat Map 2D)", font, 10));
-    menuGroups.push_back(g3);
+    // 2. Nhóm Quản lý Đoàn tàu, Toa xe & Lịch trình (Bao quát 100% hàm trong TrainList)
+    menuGroups[1].initGroup(startX, 0, btnW, mainH, "[2] QUAN LY TAU, TOA XE & LICH TRINH", font, 200);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.1. Danh sach Doan tau & Cap uu tien (P1-P3)", font, 4);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.2. Bang chi tiet Toa xe & Lich dung", font, 5);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.3. Them Doan tau moi (kem Priority)", font, 6);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.4. Gan Toa xe moi vao Doan tau", font, 14);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.5. Them Diem dung (Stop Schedule) cho Tau", font, 15);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.6. Bao cao Tre gio & Tai lap lich (Delay)", font, 11);
 
-    // 4. Nhóm Mô phỏng & Tệp
-    MenuGroup g4(startX, 0, btnW, mainH, "[4] MO PHONG & HE THONG", font, 400);
-    g4.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "4.1. Mo phong 2D Running Engine", font, 12));
-    g4.subButtons.push_back(GuiButton(startX + 20.0f, 0, btnW - 20.0f, subH, "4.2. Reload du lieu tu File Text", font, 13));
-    menuGroups.push_back(g4);
+    // 3. Nhóm Quản lý Vé & Sơ đồ ghế 2D
+    menuGroups[2].initGroup(startX, 0, btnW, mainH, "[3] QUAN LY VE & SEAT MAP 2D", font, 300);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.1. Danh sach Ve da phat hanh", font, 7);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.2. Dat ve theo phan doan (Segment Booking)", font, 8);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.3. Tra cuu Ve theo Ma Ve (Find by ID)", font, 16);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.4. Huy ve da phat hanh (Cancel Ticket)", font, 9);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.5. Mo So do ghe 2D (Click de dat ve)", font, 10);
 
-    // 5. Nút Thoát
-    MenuGroup g5(startX, 0, btnW, mainH, "[0] THOAT CHUONG TRINH", font, 0);
-    menuGroups.push_back(g5);
+    // 4. Nhóm Điều phối Xung đột & Mô phỏng Đồ họa
+    menuGroups[3].initGroup(startX, 0, btnW, mainH, "[4] DIEU PHOI XUNG DOT & MO PHONG 2D", font, 400);
+    menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.1. Chay Mo phong Do hoa SFML 2D Engine", font, 12);
+    menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.2. Quet Xung dot & Phan luong Ray phu ngay", font, 17);
+    menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.3. Nap lai du lieu goc tu File Text", font, 13);
 
-    sf::RectangleShape outputBox(sf::Vector2f(840.0f, 620.0f));
-    outputBox.setPosition(sf::Vector2f(410.0f, 80.0f));
-    outputBox.setFillColor(sf::Color(30, 30, 35));
-    outputBox.setOutlineThickness(2.0f);
-    outputBox.setOutlineColor(sf::Color(100, 100, 100));
+    // 5. Thoát
+    menuGroups[4].initGroup(startX, 0, btnW, mainH, "[0] LUU DU LIEU & THOAT HE THONG", font, 0);
 
-    string outputLog = "WELCOME TO PBL2 DASHBOARD\n-----------------------------------\nHay chon mot muc menu ben trai de thao tac.";
+    string outputLog =
+        "HE THONG DIEU PHOI DUONG SAT DON (MEET & PASS CONTROL CENTER)\n"
+        "====================================================================\n"
+        " * Thuat toan Uu tien Tau (Train Priority): SE (P1) > TN (P2) > Tau hang (P3).\n"
+        " * Kiem soat Nang luc Ha tang (maxTracks): Tu dong giu tau o ga truoc neu ga xep chi co 1 ray.\n"
+        " * Giai toa Hieu ung Domino (Multi-pass Loop): Quet lap den khi toan tuyen sach xung dot.\n\n"
+        "-> Hay chon mot chuc nang o bang dieu khien ben trai. Dung con lan chuot de cuon noi dung dai.";
+
+    float scrollOffsetY = 0.0f;
 
     while (window.isOpen()) {
         sf::Vector2i mousePos = sf::Mouse::getPosition(window);
@@ -680,190 +1237,311 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
             if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
                 if (mouseBtn->button == sf::Mouse::Button::Left) mouseClicked = true;
             }
+            // Hỗ trợ lăn chuột để cuộn khung nội dung bên phải
+            if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
+                scrollOffsetY += wheel->delta * 28.0f;
+                if (scrollOffsetY > 0.0f) scrollOffsetY = 0.0f;
+            }
+            if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                if (keyPressed->code == sf::Keyboard::Key::Down) scrollOffsetY -= 28.0f;
+                if (keyPressed->code == sf::Keyboard::Key::Up) {
+                    scrollOffsetY += 28.0f;
+                    if (scrollOffsetY > 0.0f) scrollOffsetY = 0.0f;
+                }
+            }
         }
 
-        // Tự động tính toán lại vị trí Y cho các nhóm menu khi thả xuống
+        // Cập nhật tọa độ Y cho Accordion Menu
         float currentY = startY;
-        for (auto& group : menuGroups) {
-            group.mainCategoryBtn.updatePosition(startX, currentY);
+        for (int g = 0; g < NUM_GROUPS; ++g) {
+            menuGroups[g].mainCategoryBtn.updatePosition(startX, currentY);
             currentY += mainH + gapY;
 
-            if (group.isExpanded) {
-                for (auto& subBtn : group.subButtons) {
-                    subBtn.updatePosition(startX + 15.0f, currentY);
+            if (menuGroups[g].isExpanded) {
+                for (int s = 0; s < menuGroups[g].subCount; ++s) {
+                    menuGroups[g].subButtons[s].updatePosition(startX + 15.0f, currentY);
                     currentY += subH + 4.0f;
                 }
-                currentY += 4.0f;
+                currentY += 5.0f;
             }
         }
 
-        // Xử lý Sự kiện Click Nút
-        for (auto& group : menuGroups) {
-            group.mainCategoryBtn.updateHover(mousePos);
+        // Xử lý sự kiện Click Menu
+        for (int g = 0; g < NUM_GROUPS; ++g) {
+            menuGroups[g].mainCategoryBtn.updateHover(mousePos);
 
-            if (group.mainCategoryBtn.isClicked(mousePos, mouseClicked)) {
-                if (group.mainCategoryBtn.actionID == 0) {
+            if (menuGroups[g].mainCategoryBtn.isClicked(mouseClicked)) {
+                if (menuGroups[g].mainCategoryBtn.actionID == 0) {
                     window.close();
                 } else {
-                    group.isExpanded = !group.isExpanded;
-                    group.mainCategoryBtn.setSelected(group.isExpanded);
+                    bool willExpand = !menuGroups[g].isExpanded;
+                    // Thu gọn các nhóm khác để giao diện gọn gàng, không tràn chiều dọc
+                    for (int k = 0; k < NUM_GROUPS; ++k) {
+                        menuGroups[k].isExpanded = false;
+                        menuGroups[k].mainCategoryBtn.setSelected(false);
+                    }
+                    menuGroups[g].isExpanded = willExpand;
+                    menuGroups[g].mainCategoryBtn.setSelected(willExpand);
                 }
             }
 
-            if (group.isExpanded) {
-                for (auto& subBtn : group.subButtons) {
+            if (menuGroups[g].isExpanded) {
+                for (int s = 0; s < menuGroups[g].subCount; ++s) {
+                    GuiButton& subBtn = menuGroups[g].subButtons[s];
                     subBtn.updateHover(mousePos);
 
-                    if (subBtn.isClicked(mousePos, mouseClicked)) {
+                    if (subBtn.isClicked(mouseClicked)) {
+                        scrollOffsetY = 0.0f; // Reset vị trí cuộn khi chuyển mục
+
                         switch (subBtn.actionID) {
                         case 1: {
-                            outputLog = "=== DANH SACH CAC GA DONG SAT TREN TUYEN ===\n\n";
+                            outputLog = "=== DANH SACH NHA GA & NANG LUC HA TANG (MAX TRACKS) ===\n\n";
                             StationNode* st = stationList.getHead();
                             while (st) {
-                                outputLog += " [GA] ID: " + to_string(st->getStationID()) + 
-                                             " | Ten Ga: " + st->getName() + 
-                                             " | Moc Km: " + to_string((int)st->getKmMarker()) + 
-                                             " km | So Ray Phu: " + to_string(st->getNumberOfTracks()) + "\n";
+                                string infraType = (st->getMaxTracks() == 1) ? " [Ga xep 1 ray - Khong the tranh tau]" : " [Ga co ray phu tranh tau]";
+                                outputLog += " * Ga ID: " + to_string(st->getStationID()) +
+                                             " | Ten: " + st->getName() +
+                                             " | Ly trinh: " + to_string(static_cast<int>(st->getKmMarker())) + " km" +
+                                             " | So ray (maxTracks): " + to_string(st->getMaxTracks()) + infraType + "\n";
                                 st = st->getNextStation();
                             }
                             break;
                         }
                         case 2: {
                             string strID, name, strKm, strTracks;
-                            if (showInputDialog("PBL2: THEM GA MOI", "1/4. Nhap ID Ga (VD: 109):", strID, font) &&
-                                showInputDialog("PBL2: THEM GA MOI", "2/4. Nhap Ten Ga (VD: Hue):", name, font) &&
-                                showInputDialog("PBL2: THEM GA MOI", "3/4. Nhap Moc Km (VD: 688):", strKm, font) &&
-                                showInputDialog("PBL2: THEM GA MOI", "4/4. Nhap So Ray Phu (VD: 3):", strTracks, font)) 
+                            if (showInputDialog("THEM GA MOI", "1/4. Nhap ID Ga (VD: 109):", strID, font) &&
+                                showInputDialog("THEM GA MOI", "2/4. Nhap Ten Ga (VD: Hue):", name, font) &&
+                                showInputDialog("THEM GA MOI", "3/4. Nhap Moc Km (VD: 688):", strKm, font) &&
+                                showInputDialog("THEM GA MOI", "4/4. Nhap Tong so Ray maxTracks (1 = Ga xep, >=2 = Co ray phu):", strTracks, font)) 
                             {
                                 try {
                                     stationList.addStation(stoi(strID), name, stod(strKm), stoi(strTracks));
                                     FileManager::saveStations("stations.txt", stationList);
-                                    outputLog = "-> [THANH CONG] DA THEM GA " + name + " TRUC TIEP TREN GUI!";
-                                } catch (...) { outputLog = "-> [LOI] DU LIEU NHAP VAO KHONG HOP LE!"; }
+                                    outputLog = "-> [THANH CONG] Da them Ga " + name + " (maxTracks = " + strTracks + ") va luu file!";
+                                } catch (...) { outputLog = "-> [LOI] Du lieu nhap vao khong hop le!"; }
                             }
                             break;
                         }
                         case 3: {
                             string strID;
-                            if (showInputDialog("PBL2: TIM KIEM GA", "Nhap ID Ga can tim:", strID, font)) {
+                            if (showInputDialog("TIM KIEM GA", "Nhap ID Ga can tra cuu:", strID, font)) {
                                 try {
                                     StationNode* st = stationList.findStationByID(stoi(strID));
                                     if (st) {
-                                        outputLog = "=== KET QUA TIM KIEM GA ===\n\n [GA TIM THAY] ID: " + to_string(st->getStationID()) + 
-                                                     " | Ten: " + st->getName() + " | Km: " + to_string((int)st->getKmMarker()) + 
-                                                     " | Ray Phu: " + to_string(st->getNumberOfTracks());
-                                    } else outputLog = "-> KHONG TIM THAY GA CO ID TRÊN!";
-                                } catch (...) { outputLog = "-> [LOI] ID PHAI LA SO NGUYEN!"; }
+                                        outputLog = "=== THONG TIN CHI TIET NHA GA ===\n\n"
+                                                    " * ID Ga          : " + to_string(st->getStationID()) + "\n"
+                                                    " * Ten Nha Ga     : " + st->getName() + "\n"
+                                                    " * Moc Km         : " + to_string(static_cast<int>(st->getKmMarker())) + " km\n"
+                                                    " * Nang luc Ray   : " + to_string(st->getMaxTracks()) + " ray (" +
+                                                    (st->getMaxTracks() > 1 ? "Co " + to_string(st->getMaxTracks() - 1) + " ray phu)" : "Chi co 1 ray chinh)");
+                                    } else outputLog = "-> [KHONG TIM THAY] Khong co ga nao mang ID: " + strID;
+                                } catch (...) { outputLog = "-> [LOI] ID Ga phai la so nguyen!"; }
                             }
                             break;
                         }
                         case 4: {
-                            outputLog = "=== DANH SACH CAC CHUYEN TAU CHAY TREN TUYEN ===\n\n";
+                            outputLog = "=== DANH SACH DOAN TAU & CAP DO UU TIEN (TRAIN PRIORITY) ===\n\n";
                             TrainNode* tr = trainList.getHead();
                             while (tr) {
-                                outputLog += " [TAU] Ma: " + tr->getTrainCode() + " | Huong: " + (tr->getDirection() == 1 ? "Nam (Di vao)" : "Bac (Di ra)") + "\n";
+                                string prioDesc = (tr->getPriority() == 1) ? "Uu tien 1 (Tau khach nhanh SE)" :
+                                                  (tr->getPriority() == 2 ? "Uu tien 2 (Tau khach thuong TN)" : "Uu tien 3 (Tau hang)");
+                                outputLog += " * Ma Tau: " + tr->getTrainCode() +
+                                             "  |  Cap do: " + prioDesc +
+                                             "  |  Huong chay: " + (tr->getDirection() == 1 ? "Bac -> Nam (1)" : "Nam -> Bac (0)") + "\n";
                                 tr = tr->getNextTrain();
                             }
                             break;
                         }
                         case 5: {
-                            outputLog = "========================================================================\n BANG CHI TIET LICH TRINH & TOA XE\n========================================================================\n\n";
+                            outputLog = "=== BANG CHI TIET TOA XE & LICH TRINH DUNG DO (CUON CHUOT DE XEM TIEP) ===\n\n";
                             TrainNode* tr = trainList.getHead();
                             while (tr) {
-                                outputLog += " [TAU " + tr->getTrainCode() + "] | Huong: " + (tr->getDirection() == 1 ? "Nam" : "Bac") + "\n   * Toa: ";
+                                outputLog += " [TAU " + tr->getTrainCode() + " - PRIORITY P" + to_string(tr->getPriority()) +
+                                             " | Huong: " + (tr->getDirection() == 1 ? "Nam" : "Bac") + "]\n   * Danh sach Toa: ";
                                 CarriageNode* c = tr->getHeadCarriage();
+                                if (!c) outputLog += "(Chua co toa xe)";
                                 while (c) {
-                                    outputLog += "[Toa " + to_string(c->getCarriageNo()) + ": " + c->getType() + " (" + to_string(c->getTotalSeats()) + "g)]  ";
+                                    outputLog += "[Toa " + to_string(c->getCarriageNo()) + ": " + c->getType() + " (" + to_string(c->getTotalSeats()) + " ghe)]  ";
                                     c = c->getNextCarriage();
                                 }
-                                outputLog += "\n   * Lịch dừng:\n";
+                                outputLog += "\n   * Lich trinh cac ga:\n";
                                 StopScheduleNode* s = tr->getHeadSchedule();
                                 while (s) {
-                                    char buf[100];
-                                    snprintf(buf, sizeof(buf), "     + Ga %-3d | Den: %02d:%02d -> Di: %02d:%02d | Ray: %d\n",
-                                             s->getStationID(), s->getArrivalMinute()/60, s->getArrivalMinute()%60, s->getDepartureMinute()/60, s->getDepartureMinute()%60, s->getTrackUsed());
+                                    StationNode* stNode = stationList.findStationByID(s->getStationID());
+                                    string stName = stNode ? stNode->getName() : ("Ga " + to_string(s->getStationID()));
+                                    char buf[140];
+                                    snprintf(buf, sizeof(buf), "     + ID %-3d (%-10s) | Den: %02d:%02d -> Di: %02d:%02d | Dung Ray: %d %s\n",
+                                             s->getStationID(), stName.c_str(),
+                                             s->getArrivalMinute() / 60, s->getArrivalMinute() % 60,
+                                             s->getDepartureMinute() / 60, s->getDepartureMinute() % 60,
+                                             s->getTrackUsed(),
+                                             (s->getTrackUsed() > 1 ? "(Ray phu tranh tau)" : "(Ray chinh)"));
                                     outputLog += string(buf);
                                     s = s->getNextStop();
                                 }
-                                outputLog += "------------------------------------------------------------------------\n";
+                                outputLog += "--------------------------------------------------------------------------------\n";
                                 tr = tr->getNextTrain();
                             }
                             break;
                         }
                         case 6: {
-                            string code, strDir;
-                            if (showInputDialog("PBL2: THEM TAU MOI", "1/2. Nhap Ma Tau (VD: SE5):", code, font) &&
-                                showInputDialog("PBL2: THEM TAU MOI", "2/2. Huong Chay (1: Nam, 0: Bac):", strDir, font)) 
+                            string code, strDir, strPrio;
+                            if (showInputDialog("THEM TAU MOI", "1/3. Nhap Ma Tau (VD: SE5, TN3, HH1):", code, font) &&
+                                showInputDialog("THEM TAU MOI", "2/3. Huong Chay (1: Bac->Nam, 0: Nam->Bac):", strDir, font) &&
+                                showInputDialog("THEM TAU MOI", "3/3. Cap Uu Tien (1: SE, 2: TN, 3: Tau Hang, 0: Tu suy luan):", strPrio, font)) 
                             {
                                 try {
-                                    trainList.addTrain(code, stoi(strDir));
+                                    int prio = stoi(strPrio);
+                                    trainList.addTrain(code, stoi(strDir), prio <= 0 ? -1 : prio);
                                     FileManager::saveTrains("trains.txt", trainList);
-                                    outputLog = "-> [THANH CONG] DA THEM TAU " + code;
-                                } catch (...) { outputLog = "-> [LOI] HUONG CHAY PHAI LA 1 HOAC 0!"; }
+                                    TrainNode* added = trainList.findTrainByCode(code);
+                                    outputLog = "-> [THANH CONG] Da them Tau " + code + " voi Cap uu tien P" +
+                                                to_string(added ? added->getPriority() : 1) + "!";
+                                } catch (...) { outputLog = "-> [LOI] Du lieu nhap vao khong hop le!"; }
+                            }
+                            break;
+                        }
+                        case 14: { // Bổ sung tính năng addCarriageToTrain có sẵn trong TrainList
+                            string code, strCNo, type, strSeats;
+                            if (showInputDialog("GAN TOA XE VAO TAU", "1/4. Nhap Ma Tau (VD: SE1):", code, font) &&
+                                showInputDialog("GAN TOA XE VAO TAU", "2/4. Nhap So thu tu Toa (VD: 3):", strCNo, font) &&
+                                showInputDialog("GAN TOA XE VAO TAU", "3/4. Loai Toa (VD: NgoiMem, GiuongNam):", type, font) &&
+                                showInputDialog("GAN TOA XE VAO TAU", "4/4. Tong so ghe (VD: 48):", strSeats, font)) 
+                            {
+                                try {
+                                    if (!trainList.findTrainByCode(code)) {
+                                        outputLog = "-> [LOI] Khong tim thay doan tau " + code + "!";
+                                    } else {
+                                        trainList.addCarriageToTrain(code, stoi(strCNo), type, stoi(strSeats));
+                                        FileManager::saveTrains("trains.txt", trainList);
+                                        outputLog = "-> [THANH CONG] Da gan Toa so " + strCNo + " (" + type + ", " + strSeats + " ghe) vao tau " + code + "!";
+                                    }
+                                } catch (...) { outputLog = "-> [LOI] So toa va so ghe phai la so nguyen!"; }
+                            }
+                            break;
+                        }
+                        case 15: { // Bổ sung tính năng addStopScheduleToTrain có sẵn trong TrainList
+                            string code, strStID, strArr, strDep;
+                            if (showInputDialog("THEM LICH DUNG GA", "1/4. Nhap Ma Tau (VD: SE1):", code, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "2/4. Nhap ID Ga dung (VD: 104):", strStID, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "3/4. Phut den ga trong ngay (VD: 360 cho 06:00):", strArr, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "4/4. Phut roi ga trong ngay (VD: 375 cho 06:15):", strDep, font)) 
+                            {
+                                try {
+                                    if (!trainList.findTrainByCode(code) || !stationList.findStationByID(stoi(strStID))) {
+                                        outputLog = "-> [LOI] Ma tau hoac ID Ga khong ton tai!";
+                                    } else {
+                                        trainList.addStopScheduleToTrain(code, stoi(strStID), stoi(strArr), stoi(strDep), 1);
+                                        trainList.resolveConflictAndScheduleSiding(&stationList);
+                                        FileManager::saveTrains("trains.txt", trainList);
+                                        outputLog = "-> [THANH CONG] Da them lich dung tai Ga " + strStID + " cho tau " + code + " va tu dong kiem tra xung dot!";
+                                    }
+                                } catch (...) { outputLog = "-> [LOI] Du lieu thoi gian phai la so nguyen!"; }
                             }
                             break;
                         }
                         case 7: {
                             outputLog = "=== DANH SACH VE DA PHAT HANH TRONG HE THONG ===\n\n";
                             TicketNode* tk = ticketList.getHead();
-                            if (!tk) outputLog += "(Chua co ve nào trong he thong)\n";
+                            if (!tk) outputLog += " (Chua co ve nao duoc dat trong he thong)\n";
                             while (tk) {
-                                outputLog += " [VE] Ma: " + tk->getTicketID() + " | Tau: " + tk->getTrainCode() + " | Toa: " + to_string(tk->getCarriageNo()) + 
-                                             " | Ghe: " + to_string(tk->getSeatNo()) + " | Chang: Ga " + to_string(tk->getFromStationID()) + " -> Ga " + to_string(tk->getToStationID()) + "\n";
+                                outputLog += " * Ma Ve: " + tk->getTicketID() +
+                                             " | Tau: " + tk->getTrainCode() +
+                                             " | Toa: " + to_string(tk->getCarriageNo()) +
+                                             " | Ghe: " + to_string(tk->getSeatNo()) +
+                                             " | Hanh trinh: Ga " + to_string(tk->getFromStationID()) +
+                                             " -> Ga " + to_string(tk->getToStationID()) + "\n";
                                 tk = tk->getNextTicket();
                             }
                             break;
                         }
                         case 8: {
                             string tID, trCode, strCNo, strSNo, strFrom, strTo;
-                            if (showInputDialog("BOOKING", "1/6. Nhap Ma Ve (VD: TCK201):", tID, font) &&
-                                showInputDialog("BOOKING", "2/6. Nhap Ma Tau (VD: SE1):", trCode, font) &&
-                                showInputDialog("BOOKING", "3/6. Nhap So Toa (VD: 1):", strCNo, font) &&
-                                showInputDialog("BOOKING", "4/6. Nhap So Ghe (VD: 5):", strSNo, font) &&
-                                showInputDialog("BOOKING", "5/6. Nhap ID Ga Di (VD: 101):", strFrom, font) &&
-                                showInputDialog("BOOKING", "6/6. Nhap ID Ga Den (VD: 103):", strTo, font)) 
+                            if (showInputDialog("SEGMENT BOOKING", "1/6. Nhap Ma Ve (VD: TCK201):", tID, font) &&
+                                showInputDialog("SEGMENT BOOKING", "2/6. Nhap Ma Tau (VD: SE1):", trCode, font) &&
+                                showInputDialog("SEGMENT BOOKING", "3/6. Nhap So Toa (VD: 1):", strCNo, font) &&
+                                showInputDialog("SEGMENT BOOKING", "4/6. Nhap So Ghe (VD: 5):", strSNo, font) &&
+                                showInputDialog("SEGMENT BOOKING", "5/6. Nhap ID Ga Di (VD: 101):", strFrom, font) &&
+                                showInputDialog("SEGMENT BOOKING", "6/6. Nhap ID Ga Den (VD: 103):", strTo, font)) 
                             {
                                 try {
                                     int cNo = stoi(strCNo), sNo = stoi(strSNo), fromSt = stoi(strFrom), toSt = stoi(strTo);
-                                    if (ticketList.isSeatAvailable(&stationList, trCode, cNo, sNo, fromSt, toSt)) {
+                                    if (ticketList.findTicketByID(tID) != nullptr) {
+                                        outputLog = "-> [THAT BAI] Ma ve " + tID + " da ton tai!";
+                                    } else if (ticketList.isSeatAvailable(&stationList, &trainList, trCode, cNo, sNo, fromSt, toSt)) {
                                         ticketList.addTicket(tID, trCode, cNo, sNo, fromSt, toSt);
                                         FileManager::saveTickets("tickets.txt", ticketList);
-                                        outputLog = "-> [THANH CONG] DA DAT VE " + tID + " CHANG GA " + strFrom + " -> GA " + strTo;
-                                    } else outputLog = "-> [THAT BAI] GHE DA DUOC DAT TRONG PHAN DOAN CHANG NAY!";
-                                } catch (...) { outputLog = "-> [LOI] DU LIEU NHAP KHONG HOP LE!"; }
+                                        outputLog = "-> [THANH CONG] Da dat ve " + tID + " (Tau " + trCode + ", Toa " + strCNo + ", Ghe " + strSNo +
+                                                    ") chang Ga " + strFrom + " -> Ga " + strTo;
+                                    } else {
+                                        outputLog = "-> [THAT BAI] Ghe da co nguoi dat trong phan doan Km nay hoac sai chieu chay!";
+                                    }
+                                } catch (...) { outputLog = "-> [LOI] Du lieu nhap khong hop le!"; }
+                            }
+                            break;
+                        }
+                        case 16: { // Bổ sung tính năng findTicketByID có sẵn trong TicketList
+                            string tID;
+                            if (showInputDialog("TRA CUU VE", "Nhap Ma Ve can tim (VD: TCK101):", tID, font)) {
+                                TicketNode* tk = ticketList.findTicketByID(tID);
+                                if (tk) {
+                                    outputLog = "=== KET QUA TRA CUU VE ===\n\n"
+                                                " * Ma Ve        : " + tk->getTicketID() + "\n"
+                                                " * Doan Tau     : " + tk->getTrainCode() + "\n"
+                                                " * Vi tri       : Toa so " + to_string(tk->getCarriageNo()) + " - Ghe so " + to_string(tk->getSeatNo()) + "\n"
+                                                " * Chang hanh khach : Ga ID " + to_string(tk->getFromStationID()) + " -> Ga ID " + to_string(tk->getToStationID()) + "\n";
+                                } else {
+                                    outputLog = "-> [KHONG TIM THAY] Khong ton tai ve co ma: " + tID;
+                                }
                             }
                             break;
                         }
                         case 9: {
                             string tID;
-                            if (showInputDialog("PBL2: HUY VE", "Nhap Ma Ve can huy (VD: TCK101):", tID, font)) {
+                            if (showInputDialog("HUY VE", "Nhap Ma Ve can huy (VD: TCK101):", tID, font)) {
                                 if (ticketList.cancelTicket(tID)) {
                                     FileManager::saveTickets("tickets.txt", ticketList);
-                                    outputLog = "-> [THANH CONG] DA HUY VE " + tID;
-                                } else outputLog = "-> [LOI] KHONG TIM THAY MA VE " + tID;
+                                    outputLog = "-> [THANH CONG] Da huy ve " + tID + " va giai phong ghe tren phan doan!";
+                                } else outputLog = "-> [LOI] Khong tim thay ma ve " + tID;
                             }
                             break;
                         }
                         case 10: {
-                            showSeatMapUI(stationList, trainList, ticketList, font);
+                            showSeatMapUI(stationList, trainList, ticketList, font, outputLog);
                             break;
                         }
                         case 11: {
-                            applyDelayUI(stationList, trainList, font);
-                            outputLog = "-> [THANH CONG] DA HOAN THANH DELAY PROPAGATION VA TAI LAP LICH TRANH TAU!";
+                            applyDelayUI(stationList, trainList, font, outputLog);
                             break;
                         }
                         case 12: {
-                            outputLog = "--> DANG MO CUA SO MO PHONG SFML 2D RUNNING ENGINE...\n";
                             GraphicalSimulationEngine::runSFMLSimulation(&stationList, &trainList);
-                            outputLog += "-> Da ket thuc phien mo phong va tro ve Dashboard!";
+                            outputLog = "-> Da dong cua so Mo phong 2D Running Engine va quay lai Trung tam Dieu hanh.";
+                            break;
+                        }
+                        case 17: {
+                            trainList.resolveConflictAndScheduleSiding(&stationList);
+                            FileManager::saveTrains("trains.txt", trainList);
+                            outputLog = "=== HOAN TAT QUET XUNG DOT & TAI LAP LICH DA LUOT (MULTI-PASS) ===\n\n";
+                            if (trainList.getLogCount() == 0) {
+                                outputLog += " -> Toan tuyen khong phat sinh xung dot moi.\n";
+                            } else {
+                                for (int i = 0; i < trainList.getLogCount(); ++i) {
+                                    outputLog += " >> " + trainList.getLog(i) + "\n";
+                                }
+                            }
                             break;
                         }
                         case 13: {
+                            // Xóa sạch danh sách cũ trước khi nạp lại để tránh nhân đôi phần tử
+                            stationList.clear();
+                            trainList.clear();
+                            ticketList.clear();
                             FileManager::loadStations("stations.txt", stationList);
                             FileManager::loadTrains("trains.txt", trainList);
                             FileManager::loadTickets("tickets.txt", ticketList);
-                            outputLog = "-> NAP LAI THANH CONG DU LIEU TU FILE PERSISTENCE!";
+                            trainList.resolveConflictAndScheduleSiding(&stationList);
+                            outputLog = "-> [RELOAD THANH CONG] Da lam moi toan bo du lieu tu File Text va cap nhat lich tranh tau!";
                             break;
                         }
                         }
@@ -872,33 +1550,123 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
             }
         }
 
-        window.clear(sf::Color(24, 25, 28));
+        // ==================== VẼ GIAO DIỆN DASHBOARD HIỆN ĐẠI ====================
+        window.clear(GuiTheme::BgMain);
 
-        sf::Text headerText(font, "PBL2: DIEU PHOI TAU HOA", 18);
-        headerText.setFillColor(sf::Color(241, 196, 15));
-        headerText.setPosition(sf::Vector2f(startX, 30.0f));
-        window.draw(headerText);
+        // 1. Đếm thống kê thời gian thực cho các thẻ KPI trên cùng
+        int stCount = 0, trCount = 0, tkCount = 0;
+        for (StationNode* s = stationList.getHead(); s != nullptr; s = s->getNextStation()) stCount++;
+        for (TrainNode* t = trainList.getHead(); t != nullptr; t = t->getNextTrain()) trCount++;
+        for (TicketNode* k = ticketList.getHead(); k != nullptr; k = k->getNextTicket()) tkCount++;
 
-        // Vẽ các nhóm menu và các nút con mở rộng
-        for (auto& group : menuGroups) {
-            group.mainCategoryBtn.draw(window);
-            if (group.isExpanded) {
-                for (auto& subBtn : group.subButtons) {
-                    subBtn.draw(window);
+        auto drawKPICard = [&](float x, float y, float w, float h, const string& title, const string& val, sf::Color accent) {
+            sf::RectangleShape card(sf::Vector2f(w, h));
+            card.setPosition(sf::Vector2f(x, y));
+            card.setFillColor(GuiTheme::CardBg);
+            card.setOutlineThickness(1.0f);
+            card.setOutlineColor(GuiTheme::Border);
+            window.draw(card);
+
+            sf::RectangleShape topLine(sf::Vector2f(w, 3.5f));
+            topLine.setPosition(sf::Vector2f(x, y));
+            topLine.setFillColor(accent);
+            window.draw(topLine);
+
+            sf::Text lbl(font, title, 11);
+            lbl.setFillColor(GuiTheme::TextMuted);
+            lbl.setPosition(sf::Vector2f(x + 14.0f, y + 12.0f));
+            window.draw(lbl);
+
+            sf::Text vTxt(font, val, 20);
+            vTxt.setFillColor(GuiTheme::TextLight);
+            vTxt.setPosition(sf::Vector2f(x + 14.0f, y + 32.0f));
+            window.draw(vTxt);
+        };
+
+        // Tiêu đề Hệ thống bên trái
+        sf::Text appTitle(font, "RAILWAY CONTROL CENTER", 20);
+        appTitle.setFillColor(GuiTheme::AccentGold);
+        appTitle.setPosition(sf::Vector2f(startX, 24.0f));
+        window.draw(appTitle);
+
+        sf::Text appSub(font, "PBL2: Single-Track Meet & Pass Dispatcher", 12);
+        appSub.setFillColor(GuiTheme::AccentCyan);
+        appSub.setPosition(sf::Vector2f(startX, 52.0f));
+        window.draw(appSub);
+
+        // 4 Thẻ KPI bên phải
+        drawKPICard(390.0f, 18.0f, 220.0f, 68.0f, "HA TANG NHA GA", to_string(stCount) + " Ga tren tuyen", GuiTheme::AccentGreen);
+        drawKPICard(625.0f, 18.0f, 220.0f, 68.0f, "DOAN TAU DANG QUAN LY", to_string(trCount) + " Chuyen (P1-P3)", GuiTheme::AccentCyan);
+        drawKPICard(860.0f, 18.0f, 220.0f, 68.0f, "VE DA PHAT HANH", to_string(tkCount) + " Ve hanh khach", GuiTheme::AccentGold);
+        drawKPICard(1095.0f, 18.0f, 240.0f, 68.0f, "LOG GIAI TOA XUNG DOT", to_string(trainList.getLogCount()) + " Su kien gan nhat", GuiTheme::AccentPurple);
+
+        // 2. Vẽ các nhóm Menu bên trái
+        for (int g = 0; g < NUM_GROUPS; ++g) {
+            menuGroups[g].mainCategoryBtn.draw(window);
+            if (menuGroups[g].isExpanded) {
+                for (int s = 0; s < menuGroups[g].subCount; ++s) {
+                    menuGroups[g].subButtons[s].draw(window);
                 }
             }
         }
 
+        // 3. Khung Console chính (Có cắt vùng hiển thị sf::View để hỗ trợ cuộn chuột mượt mà)
+        sf::RectangleShape outputBox(sf::Vector2f(945.0f, 445.0f));
+        outputBox.setPosition(sf::Vector2f(390.0f, 105.0f));
+        outputBox.setFillColor(GuiTheme::PanelBg);
+        outputBox.setOutlineThickness(1.5f);
+        outputBox.setOutlineColor(GuiTheme::Border);
         window.draw(outputBox);
+
+        // Sử dụng sf::View để nội dung văn bản khi cuộn không bị tràn ra ngoài khung outputBox
+        sf::View defaultView = window.getView();
+        sf::View scrollView(sf::FloatRect({390.0f, 105.0f}, {945.0f, 445.0f}));
+        scrollView.setViewport(sf::FloatRect(
+            {390.0f / 1360.0f, 105.0f / 768.0f},
+            {945.0f / 1360.0f, 445.0f / 768.0f}
+        ));
+        window.setView(scrollView);
+
         sf::Text logText(font, outputLog, 13);
-        logText.setFillColor(sf::Color::White);
-        logText.setPosition(sf::Vector2f(425.0f, 95.0f));
+        logText.setFillColor(GuiTheme::TextLight);
+        logText.setPosition(sf::Vector2f(410.0f, 120.0f + scrollOffsetY));
         window.draw(logText);
+
+        window.setView(defaultView);
+
+        // 4. Khung Nhật ký Xung đột Thời gian thực (Circular Buffer Conflict Logs) ở góc dưới phải
+        sf::RectangleShape conflictBox(sf::Vector2f(945.0f, 175.0f));
+        conflictBox.setPosition(sf::Vector2f(390.0f, 568.0f));
+        conflictBox.setFillColor(GuiTheme::PanelBg);
+        conflictBox.setOutlineThickness(1.5f);
+        conflictBox.setOutlineColor(GuiTheme::Border);
+        window.draw(conflictBox);
+
+        sf::Text cfTitle(font, "NHAT KY DIEU PHOI & TRANH TAU TU DONG (CIRCULAR BUFFER CONFLICT LOGS)", 12);
+        cfTitle.setFillColor(GuiTheme::AccentPurple);
+        cfTitle.setPosition(sf::Vector2f(408.0f, 578.0f));
+        window.draw(cfTitle);
+
+        if (trainList.getLogCount() == 0) {
+            sf::Text noCf(font, "-> He thong chua ghi nhan xung dot nao hoac toan bo tuyen dang thong suot.", 12);
+            noCf.setFillColor(GuiTheme::TextMuted);
+            noCf.setPosition(sf::Vector2f(408.0f, 604.0f));
+            window.draw(noCf);
+        } else {
+            float cy = 602.0f;
+            int startIdx = std::max(0, trainList.getLogCount() - 6); // Hiển thị 6 dòng mới nhất trên Dashboard
+            for (int i = startIdx; i < trainList.getLogCount(); ++i) {
+                sf::Text cfLine(font, ">> " + trainList.getLog(i), 12);
+                cfLine.setFillColor(GuiTheme::AccentGold);
+                cfLine.setPosition(sf::Vector2f(408.0f, cy));
+                window.draw(cfLine);
+                cy += 21.0f;
+            }
+        }
 
         window.display();
     }
 }
-
 
 ========================================
 File: .\GuiMenu.h
@@ -908,100 +1676,148 @@ File: .\GuiMenu.h
 
 #include <SFML/Graphics.hpp>
 #include <string>
-#include <vector>
 
 class StationList;
 class TrainList;
 class TicketList;
 
+// Bảng màu đồng bộ với GraphicalSimulationEngine (Dracula Dark Mode)
+namespace GuiTheme {
+    const sf::Color BgMain(18, 20, 29);          // #12141D - Nền tổng thể
+    const sf::Color PanelBg(28, 32, 46);         // #1C202E - Nền khung nội dung
+    const sf::Color CardBg(36, 41, 58);          // #24293A - Nền thẻ KPI
+    const sf::Color Border(62, 70, 96);          // #3E4660 - Viền khung
+
+    const sf::Color BtnMain(41, 47, 70);         // Màu nút nhóm chính
+    const sf::Color BtnMainHover(56, 65, 96);    // Màu nút chính khi di chuột
+    const sf::Color BtnMainActive(46, 134, 222); // Màu nút chính khi đang mở
+    
+    const sf::Color BtnSub(30, 35, 52);          // Màu nút chức năng con
+    const sf::Color BtnSubHover(68, 78, 115);    // Màu nút con khi di chuột
+
+    const sf::Color AccentGold(241, 250, 140);   // #F1FA8C - Vàng nhấn
+    const sf::Color AccentCyan(0, 229, 255);     // #00E5FF - Xanh Cyan
+    const sf::Color AccentGreen(80, 250, 123);   // #50FA7B - Xanh lá
+    const sf::Color AccentRed(255, 85, 85);      // #FF5555 - Đỏ cảnh báo
+    const sf::Color AccentPurple(189, 147, 249); // #BD93F9 - Tím Dracula
+    const sf::Color TextLight(248, 248, 242);    // Chữ chính
+    const sf::Color TextMuted(148, 163, 184);    // Chữ phụ
+}
+
 struct GuiButton {
     sf::RectangleShape shape;
+    sf::RectangleShape accentBar; // Thanh chỉ báo màu bên trái nút
     sf::Text text;
     int actionID;
     bool isHovered;
     bool isSelected;
+    bool isSubButton;
 
-    GuiButton(float x, float y, float width, float height, const std::string& label, sf::Font& font, int id) 
-        : text(font, label, 12), actionID(id), isHovered(false), isSelected(false) 
-    {
+    // Constructor mặc định phục vụ cấp phát mảng tĩnh
+    GuiButton() : text(*(new sf::Font()), "", 12), actionID(-1), isHovered(false), isSelected(false), isSubButton(false) {}
+
+    void init(float x, float y, float width, float height, const std::string& label, sf::Font& font, int id, bool sub = false) {
+        actionID = id;
+        isHovered = false;
+        isSelected = false;
+        isSubButton = sub;
+
         shape.setPosition(sf::Vector2f(x, y));
         shape.setSize(sf::Vector2f(width, height));
-        shape.setFillColor(sf::Color(41, 128, 185));
-        shape.setOutlineThickness(1.5f);
-        shape.setOutlineColor(sf::Color(52, 152, 219));
+        shape.setFillColor(isSubButton ? GuiTheme::BtnSub : GuiTheme::BtnMain);
+        shape.setOutlineThickness(1.0f);
+        shape.setOutlineColor(GuiTheme::Border);
 
-        text.setFillColor(sf::Color::White);
-        sf::FloatRect textBounds = text.getLocalBounds();
-        text.setPosition(sf::Vector2f(
-            x + (width - textBounds.size.x) / 2.0f - textBounds.position.x,
-            y + (height - textBounds.size.y) / 2.0f - textBounds.position.y
-        ));
+        accentBar.setPosition(sf::Vector2f(x, y));
+        accentBar.setSize(sf::Vector2f(4.0f, height));
+        accentBar.setFillColor(isSubButton ? GuiTheme::AccentCyan : GuiTheme::AccentGold);
+
+        text.setFont(font);
+        text.setString(label);
+        text.setCharacterSize(isSubButton ? 12 : 13);
+        text.setFillColor(GuiTheme::TextLight);
+
+        updatePosition(x, y);
     }
 
     void updatePosition(float x, float y) {
         shape.setPosition(sf::Vector2f(x, y));
+        accentBar.setPosition(sf::Vector2f(x, y));
         sf::FloatRect textBounds = text.getLocalBounds();
+        // Căn lề trái có khoảng đệm hiện đại thay vì căn giữa đơn điệu
         text.setPosition(sf::Vector2f(
-            x + (shape.getSize().x - textBounds.size.x) / 2.0f - textBounds.position.x,
+            x + 14.0f,
             y + (shape.getSize().y - textBounds.size.y) / 2.0f - textBounds.position.y
         ));
     }
 
     void updateHover(const sf::Vector2i& mousePos) {
-        if (shape.getGlobalBounds().contains(sf::Vector2f(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y)))) {
-            isHovered = true;
-            if (!isSelected) {
-                shape.setFillColor(sf::Color(52, 152, 219));
-                shape.setOutlineColor(sf::Color(241, 196, 15));
-            }
+        sf::Vector2f mp(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y));
+        isHovered = shape.getGlobalBounds().contains(mp);
+
+        if (isHovered) {
+            shape.setFillColor(isSubButton ? GuiTheme::BtnSubHover : GuiTheme::BtnMainHover);
+            shape.setOutlineColor(isSubButton ? GuiTheme::AccentCyan : GuiTheme::AccentGold);
         } else {
-            isHovered = false;
-            if (!isSelected) {
-                shape.setFillColor(sf::Color(41, 128, 185));
-                shape.setOutlineColor(sf::Color(52, 152, 219));
+            if (isSelected && !isSubButton) {
+                shape.setFillColor(GuiTheme::BtnMainActive);
+                shape.setOutlineColor(GuiTheme::AccentGold);
+            } else {
+                shape.setFillColor(isSubButton ? GuiTheme::BtnSub : GuiTheme::BtnMain);
+                shape.setOutlineColor(GuiTheme::Border);
             }
         }
     }
 
     void setSelected(bool selected) {
         isSelected = selected;
-        if (isSelected) {
-            shape.setFillColor(sf::Color(39, 174, 96)); // Màu xanh lá khi được chọn
-            shape.setOutlineColor(sf::Color(241, 196, 15));
-        } else {
-            shape.setFillColor(sf::Color(41, 128, 185));
-            shape.setOutlineColor(sf::Color(52, 152, 219));
-        }
+        updateHover({-1, -1});
     }
 
-    bool isClicked(const sf::Vector2i& mousePos, bool mousePressed) const {
+    bool isClicked(bool mousePressed) const {
         return isHovered && mousePressed;
     }
 
-    void draw(sf::RenderWindow& window) {
+    void draw(sf::RenderWindow& window) const {
         window.draw(shape);
+        if (isSelected || isHovered) {
+            window.draw(accentBar);
+        }
         window.draw(text);
     }
 };
 
-// Cấu trúc Lưu trữ Nhóm Menu Chính và các Sub-Menu
+// Cấu trúc Nhóm Menu dùng mảng tĩnh (Không dùng std::vector)
 struct MenuGroup {
+    static const int MAX_SUB_BTNS = 8;
     GuiButton mainCategoryBtn;
-    std::vector<GuiButton> subButtons;
+    GuiButton subButtons[MAX_SUB_BTNS];
+    int subCount;
     bool isExpanded;
 
-    MenuGroup(float x, float y, float w, float h, const std::string& label, sf::Font& font, int categoryID)
-        : mainCategoryBtn(x, y, w, h, label, font, categoryID), isExpanded(false) {}
+    MenuGroup() : subCount(0), isExpanded(false) {}
+
+    void initGroup(float x, float y, float w, float h, const std::string& label, sf::Font& font, int categoryID) {
+        mainCategoryBtn.init(x, y, w, h, label, font, categoryID, false);
+        subCount = 0;
+        isExpanded = false;
+    }
+
+    void addSubButton(float x, float y, float w, float h, const std::string& label, sf::Font& font, int actionID) {
+        if (subCount < MAX_SUB_BTNS) {
+            subButtons[subCount].init(x, y, w, h, label, font, actionID, true);
+            subCount++;
+        }
+    }
 };
 
 class GuiMenu {
 public:
     static void runGUIMenu(StationList& stationList, TrainList& trainList, TicketList& ticketList);
     static bool showInputDialog(const std::string& title, const std::string& promptLabel, std::string& outputValue, sf::Font& font);
-    static void showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font);
-    static void applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font);
+    static void showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font, std::string& outputLog);
+    static void applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font, std::string& outputLog);
 };
-
 
 ========================================
 File: .\main.cpp
@@ -1017,29 +1833,34 @@ File: .\main.cpp
 using namespace std;
 
 int main() {
-    // 1. Khởi tạo các danh sách con trỏ tự quản lý bộ nhớ Heap
     StationList stationList;
     TrainList trainList;
     TicketList ticketList;
 
     cout << "--> Dang khoi tao va nap du lieu ban dau tu file text...\n";
 
-    // 2. Nạp dữ liệu tự động từ các file persistence
+    // 1. Nạp dữ liệu từ các tập tin .txt
     FileManager::loadStations("stations.txt", stationList);
     FileManager::loadTrains("trains.txt", trainList);
     FileManager::loadTickets("tickets.txt", ticketList);
 
-    cout << "--> Nap du lieu thanh cong! Dang mo Cua so Do hoa SFML Dashboard...\n";
+    // 2. BỔ SUNG: TỰ ĐỘNG QUÉT & KHỦNG XUNG ĐỘT NGAY KHI KHỞI ĐỘNG
+    trainList.resolveConflictAndScheduleSiding(&stationList);
+    
+    // Lưu lại lịch trình đã tự động khử xung đột ra file
+    FileManager::saveTrains("trains.txt", trainList);
 
-    // 3. KHỞI CHẠY TRỰC TIẾP CỬA SỔ GUI ĐỒ HỌA TƯƠNG TÁC BẰNG CHUỘT
+    cout << "--> Nap va khu xung dot thanh cong! Dang mo SFML Dashboard...\n";
+
+    // 3. Chạy giao diện đồ họa GUI
     GuiMenu::runGUIMenu(stationList, trainList, ticketList);
 
-    // 4. Tự động lưu toàn bộ dữ liệu ra tập tin text trước khi kết thúc
+    // 4. Lưu lại dữ liệu an toàn trước khi thoát
     FileManager::saveStations("stations.txt", stationList);
     FileManager::saveTrains("trains.txt", trainList);
     FileManager::saveTickets("tickets.txt", ticketList);
 
-    cout << "Chuong trinh da thoat an toan (Zero Memory Leaks).\n";
+    cout << "Chuong trinh da thoat an toan.\n";
     return 0;
 }
 
@@ -1050,7 +1871,7 @@ File: .\StationList.cpp
 
 #include "StationList.h"
 
-StationList::StationList() : head(nullptr) {}
+StationList::StationList() : head(nullptr), tail(nullptr) {}
 
 void StationList::clear() {
     while (head != nullptr) {
@@ -1059,50 +1880,33 @@ void StationList::clear() {
         delete temp;
     }
     head = nullptr;
+    tail = nullptr;
 }
 
 StationList::~StationList() {
     clear();
 }
 
-StationNode* StationList::getHead() const {
-    return head;
-}
+StationNode* StationList::getHead() const { return head; }
+StationNode* StationList::getTail() const { return tail; }
 
 void StationList::addStation(int id, const std::string& name, double km, int tracks) {
     StationNode* newNode = new StationNode(id, name, km, tracks);
     if (head == nullptr) {
-        head = newNode;
+        head = tail = newNode;
         return;
     }
-    StationNode* temp = head;
-    while (temp->getNextStation() != nullptr) {
-        temp = temp->getNextStation();
-    }
-    temp->setNextStation(newNode);
+    tail->setNextStation(newNode);
+    tail = newNode;
 }
 
 StationNode* StationList::findStationByID(int id) const {
     StationNode* temp = head;
     while (temp != nullptr) {
-        if (temp->getStationID() == id) {
-            return temp;
-        }
+        if (temp->getStationID() == id) return temp;
         temp = temp->getNextStation();
     }
     return nullptr;
-}
-
-void StationList::displayAll() const {
-    std::cout << "\n=== DANH SACH CAC GA TREN TUYEN ===\n";
-    StationNode* temp = head;
-    while (temp != nullptr) {
-        std::cout << "ID: " << temp->getStationID() 
-                  << " | Ten: " << temp->getName() 
-                  << " | Km: " << temp->getKmMarker() 
-                  << " | So ray phu: " << temp->getNumberOfTracks() << "\n";
-        temp = temp->getNextStation();
-    }
 }
 
 ========================================
@@ -1110,7 +1914,6 @@ File: .\StationList.h
 ========================================
 
 #pragma once
-
 #include <iostream>
 #include <string>
 #include "StationNode.h"
@@ -1118,15 +1921,16 @@ File: .\StationList.h
 class StationList {
 private:
     StationNode* head;
+    StationNode* tail; // Con trỏ cuối giúp chèn O(1)
 
 public:
     StationList();
     ~StationList();
 
     StationNode* getHead() const;
+    StationNode* getTail() const;
     void addStation(int id, const std::string& name, double km, int tracks);
     StationNode* findStationByID(int id) const;
-    void displayAll() const;
     void clear();
 };
 
@@ -1135,7 +1939,6 @@ File: .\StationNode.h
 ========================================
 
 #pragma once
-
 #include <string>
 
 class StationNode {
@@ -1143,18 +1946,23 @@ private:
     int stationID;
     std::string name;
     double kmMarker;
-    int numberOfTracks;
+    int maxTracks; // Năng lực hạ tầng: Tổng số đường ray tại ga (1 = ga xép chỉ có ray chính)
     StationNode* nextStation;
 
 public:
     StationNode(int id, const std::string& stName, double km, int tracks)
-        : stationID(id), name(stName), kmMarker(km), numberOfTracks(tracks), nextStation(NULL) {}
+        : stationID(id), name(stName), kmMarker(km), 
+          maxTracks(tracks < 1 ? 1 : tracks), nextStation(nullptr) {}
+
     int getStationID() const { return stationID; }
     std::string getName() const { return name; }
     double getKmMarker() const { return kmMarker; }
-    int getNumberOfTracks() const { return numberOfTracks; }
-    StationNode* getNextStation() const { return nextStation; }
+    
+    int getMaxTracks() const { return maxTracks; }
+    int getNumberOfTracks() const { return maxTracks; } // Giữ tương thích với FileManager & GuiMenu
+    void setMaxTracks(int tracks) { maxTracks = (tracks < 1) ? 1 : tracks; }
 
+    StationNode* getNextStation() const { return nextStation; }
     void setNextStation(StationNode* next) { nextStation = next; }
 };
 
@@ -1197,12 +2005,13 @@ File: .\TicketList.cpp
 #include "TrainList.h"
 #include "StationNode.h"
 #include "TrainNode.h"
+#include "StopScheduleNode.h"
 #include <iostream>
 #include <algorithm>
 
 using namespace std;
 
-TicketList::TicketList() : head(nullptr) {}
+TicketList::TicketList() : head(nullptr), tail(nullptr) {}
 
 TicketList::~TicketList() {
     clear();
@@ -1215,20 +2024,19 @@ void TicketList::clear() {
         delete temp;
     }
     head = nullptr;
+    tail = nullptr;
 }
 
+// Chèn vé mới vào cuối danh sách liên kết với độ phức tạp O(1)
 void TicketList::addTicket(const string& ticketID, const string& trainCode, 
                            int carriageNo, int seatNo, int fromID, int toID) {
     TicketNode* newNode = new TicketNode(ticketID, trainCode, carriageNo, seatNo, fromID, toID);
     if (!head) {
-        head = newNode;
+        head = tail = newNode;
         return;
     }
-    TicketNode* temp = head;
-    while (temp->getNextTicket()) {
-        temp = temp->getNextTicket();
-    }
-    temp->setNextTicket(newNode);
+    tail->setNextTicket(newNode);
+    tail = newNode;
 }
 
 TicketNode* TicketList::findTicketByID(const string& ticketID) const {
@@ -1243,9 +2051,11 @@ TicketNode* TicketList::findTicketByID(const string& ticketID) const {
 bool TicketList::cancelTicket(const string& ticketID) {
     if (!head) return false;
 
+    // Trường hợp vé cần hủy nằm ngay đầu danh sách
     if (head->getTicketID() == ticketID) {
         TicketNode* temp = head;
         head = head->getNextTicket();
+        if (!head) tail = nullptr; // Danh sách trở thành rỗng
         delete temp;
         return true;
     }
@@ -1255,45 +2065,115 @@ bool TicketList::cancelTicket(const string& ticketID) {
         curr = curr->getNextTicket();
     }
 
+    // Tìm thấy vé ở giữa hoặc cuối danh sách
     if (curr->getNextTicket()) {
         TicketNode* temp = curr->getNextTicket();
         curr->setNextTicket(temp->getNextTicket());
+        if (temp == tail) {
+            tail = curr; // Cập nhật lại tail nếu hủy vé cuối cùng
+        }
         delete temp;
         return true;
     }
     return false;
 }
 
-void TicketList::displayAllTickets() const {
-    cout << "\n=== DANH SACH VE DA DAT ===\n";
-    TicketNode* temp = head;
-    if (!temp) {
-        cout << "(Chua co ve nao trong he thong)\n";
-        return;
-    }
-    while (temp != nullptr) {
-        cout << "Ma Ve: " << temp->getTicketID()
-             << " | Tau: " << temp->getTrainCode()
-             << " | Toa: " << temp->getCarriageNo()
-             << " | Ghe: " << temp->getSeatNo()
-             << " | Chang: Ga " << temp->getFromStationID() 
-             << " -> Ga " << temp->getToStationID() << "\n";
-        temp = temp->getNextTicket();
-    }
-}
-
-// ==================== SEGMENT BOOKING (KIỂM TRA GIAO THOA KM) ====================
-bool TicketList::isSeatAvailable(StationList* stationList, const string& trainCode, 
-                                int carriageNo, int seatNo, int newFromID, int newToID) const 
+bool TicketList::checkCarriageSeats(StationList* stationList, TrainList* trainList,
+                                    const string& trainCode, int carriageNo,
+                                    int newFromID, int newToID,
+                                    bool seatFreeOut[], int maxSeats) const 
 {
-    if (!stationList) return false;
+    if (!stationList || !trainList || newFromID == newToID || maxSeats <= 0) return false;
 
     StationNode* stNewFrom = stationList->findStationByID(newFromID);
-    StationNode* stNewTo = stationList->findStationByID(newToID);
+    StationNode* stNewTo   = stationList->findStationByID(newToID);
     if (!stNewFrom || !stNewTo) return false;
 
+    TrainNode* train = trainList->findTrainByCode(trainCode);
+    if (!train) return false;
+
+    bool foundFrom = false;
+    bool validDirection = false;
+    StopScheduleNode* stop = train->getHeadSchedule();
+    while (stop != nullptr) {
+        if (stop->getStationID() == newFromID) {
+            foundFrom = true;
+        } else if (stop->getStationID() == newToID && foundFrom) {
+            validDirection = true;
+            break;
+        }
+        stop = stop->getNextStop();
+    }
+
+    if (!validDirection) {
+        return false; 
+    }
+
+    for (int i = 1; i <= maxSeats; ++i) {
+        seatFreeOut[i] = true;
+    }
+
     double newKmStart = min(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
-    double newKmEnd = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
+    double newKmEnd   = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
+
+    TicketNode* curr = head;
+    while (curr != nullptr) {
+        int sNo = curr->getSeatNo();
+
+        if (curr->getTrainCode() == trainCode &&
+            curr->getCarriageNo() == carriageNo &&
+            sNo >= 1 && sNo <= maxSeats && seatFreeOut[sNo]) 
+        {
+            StationNode* stExistFrom = stationList->findStationByID(curr->getFromStationID());
+            StationNode* stExistTo   = stationList->findStationByID(curr->getToStationID());
+
+            if (stExistFrom && stExistTo) {
+                double existKmStart = min(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
+                double existKmEnd   = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
+
+                if (max(newKmStart, existKmStart) < min(newKmEnd, existKmEnd)) {
+                    seatFreeOut[sNo] = false;
+                }
+            }
+        }
+        curr = curr->getNextTicket();
+    }
+
+    return true;
+}
+
+// ==================== KIỂM TRA ĐƠN LẺ KHI ĐẶT VÉ (SEGMENT BOOKING) ====================
+bool TicketList::isSeatAvailable(StationList* stationList, TrainList* trainList, const string& trainCode, 
+                                 int carriageNo, int seatNo, int newFromID, int newToID) const 
+{
+    if (!stationList || !trainList || newFromID == newToID) return false;
+
+    StationNode* stNewFrom = stationList->findStationByID(newFromID);
+    StationNode* stNewTo   = stationList->findStationByID(newToID);
+    if (!stNewFrom || !stNewTo) return false;
+
+    TrainNode* train = trainList->findTrainByCode(trainCode);
+    if (!train) return false;
+
+    int maxSeats = train->getCarriageSeats(carriageNo);
+    if (maxSeats == 0 || seatNo <= 0 || seatNo > maxSeats) return false;
+
+    bool foundFrom = false;
+    bool validDirection = false;
+    StopScheduleNode* stop = train->getHeadSchedule();
+    while (stop != nullptr) {
+        if (stop->getStationID() == newFromID) {
+            foundFrom = true;
+        } else if (stop->getStationID() == newToID && foundFrom) {
+            validDirection = true;
+            break;
+        }
+        stop = stop->getNextStop();
+    }
+    if (!validDirection) return false;
+
+    double newKmStart = min(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
+    double newKmEnd   = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
 
     TicketNode* curr = head;
     while (curr != nullptr) {
@@ -1302,24 +2182,20 @@ bool TicketList::isSeatAvailable(StationList* stationList, const string& trainCo
             curr->getSeatNo() == seatNo) 
         {
             StationNode* stExistFrom = stationList->findStationByID(curr->getFromStationID());
-            StationNode* stExistTo = stationList->findStationByID(curr->getToStationID());
+            StationNode* stExistTo   = stationList->findStationByID(curr->getToStationID());
 
             if (stExistFrom && stExistTo) {
                 double existKmStart = min(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-                double existKmEnd = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
+                double existKmEnd   = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
 
-                // Hai đoạn [A1, B1] và [A2, B2] giao thoa khi: max(A1, A2) < min(B1, B2)
-                double overlapStart = max(newKmStart, existKmStart);
-                double overlapEnd = min(newKmEnd, existKmEnd);
-
-                if (overlapStart < overlapEnd) {
-                    return false; // Đã bị chiếm trong đoạn này
+                if (max(newKmStart, existKmStart) < min(newKmEnd, existKmEnd)) {
+                    return false;
                 }
             }
         }
         curr = curr->getNextTicket();
     }
-    return true; // Ghế còn trống
+    return true;
 }
 
 ========================================
@@ -1327,8 +2203,8 @@ File: .\TicketList.h
 ========================================
 
 #pragma once
-
 #include <string>
+#include <vector>
 #include <iostream>
 #include "TicketNode.h"
 
@@ -1338,6 +2214,7 @@ class TrainList;
 class TicketList {
 private:
     TicketNode* head;
+    TicketNode* tail;
 
 public:
     TicketList();
@@ -1348,19 +2225,18 @@ public:
 
     void addTicket(const std::string& ticketID, const std::string& trainCode, 
                    int carriageNo, int seatNo, int fromID, int toID);
-
     TicketNode* findTicketByID(const std::string& ticketID) const;
-
     bool cancelTicket(const std::string& ticketID);
 
-    void displayAllTickets() const; 
+    bool isSeatAvailable(StationList* stationList, TrainList* trainList, const std::string& trainCode, 
+                         int carriageNo, int seatNo, int newFromID, int newToID) const;
 
-    // Kiểm tra ghế trống trên phân đoạn chặng theo mốc Km ga
-    bool isSeatAvailable(StationList* stationList, const std::string& trainCode, 
-                        int carriageNo, int seatNo, int newFromID, int newToID) const;
-
+    // Truyền một mảng bool có sẵn vào hàm để điền dữ liệu (không cần vector)
+    bool checkCarriageSeats(StationList* stationList, TrainList* trainList,
+                            const std::string& trainCode, int carriageNo,
+                            int newFromID, int newToID,
+                            bool seatFreeOut[], int maxSeats) const;
 };
-
 
 ========================================
 File: .\TicketNode.h
@@ -1401,16 +2277,27 @@ public:
 File: .\TrainList.cpp
 ========================================
 
+// ==================== File: TrainList.cpp ====================
 #include "TrainList.h"
 #include "StationList.h"
 #include "StopScheduleNode.h"
 #include "StationNode.h"
 #include <iostream>
 #include <algorithm>
+#include <sstream>
+#include <iomanip>
 
 using namespace std;
 
-TrainList::TrainList() : head(nullptr) {}
+static string formatTimeHHMM(int totalMinutes) {
+    int h = (totalMinutes / 60) % 24;
+    int m = totalMinutes % 60;
+    stringstream ss;
+    ss << setfill('0') << setw(2) << h << ":" << setfill('0') << setw(2) << m;
+    return ss.str();
+}
+
+TrainList::TrainList() : head(nullptr), tail(nullptr), logStart(0), logCount(0) {}
 
 TrainList::~TrainList() {
     clear();
@@ -1423,23 +2310,19 @@ void TrainList::clear() {
         delete temp;
     }
     head = nullptr;
+    tail = nullptr;
 }
 
-TrainNode* TrainList::getHead() const {
-    return head;
-}
+TrainNode* TrainList::getHead() const { return head; }
 
-void TrainList::addTrain(const string& code, int direction) {
-    TrainNode* newNode = new TrainNode(code, direction);
+void TrainList::addTrain(const string& code, int direction, int priority) {
+    TrainNode* newNode = new TrainNode(code, direction, priority);
     if (!head) {
-        head = newNode;
+        head = tail = newNode;
         return;
     }
-    TrainNode* temp = head;
-    while (temp->getNextTrain() != nullptr) {
-        temp = temp->getNextTrain();
-    }
-    temp->setNextTrain(newNode);
+    tail->setNextTrain(newNode);
+    tail = newNode;
 }
 
 TrainNode* TrainList::findTrainByCode(const string& code) const {
@@ -1453,55 +2336,240 @@ TrainNode* TrainList::findTrainByCode(const string& code) const {
 
 void TrainList::addCarriageToTrain(const string& code, int cNo, const string& type, int seats) {
     TrainNode* train = findTrainByCode(code);
-    if (train) {
-        train->addCarriage(cNo, type, seats);
-    }
+    if (train) train->addCarriage(cNo, type, seats);
 }
 
 void TrainList::addStopScheduleToTrain(const string& code, int stID, int arr, int dep, int track) {
     TrainNode* train = findTrainByCode(code);
-    if (train) {
-        train->addSchedule(stID, arr, dep, track);
+    if (train) train->addSchedule(stID, arr, dep, track);
+}
+
+void TrainList::addConflictLog(const std::string& logMsg) {
+    if (logCount < MAX_LOGS) {
+        // Chưa đầy mảng: ghi tiếp vào vị trí kế
+        int insertIdx = (logStart + logCount) % MAX_LOGS;
+        conflictLogs[insertIdx] = logMsg;
+        logCount++;
+    } else {
+        // Đã đầy: ghi đè lên phần tử cũ nhất và dịch vị trí bắt đầu sang phải
+        conflictLogs[logStart] = logMsg;
+        logStart = (logStart + 1) % MAX_LOGS;
     }
 }
 
-void TrainList::displayAllTrains() const {
-    cout << "\n=== DANH SACH CAC CHUYEN TAU ===\n";
-    TrainNode* temp = head;
-    while (temp != nullptr) {
-        cout << "Ma Tau: " << temp->getTrainCode() 
-             << " | Huong Chay: " << (temp->getDirection() == 1 ? "Nam (Di vao)" : "Bac (Di ra)") << "\n";
-        temp = temp->getNextTrain();
-    }
+std::string TrainList::getLog(int index) const {
+    if (index < 0 || index >= logCount) return "";
+    int actualIdx = (logStart + index) % MAX_LOGS;
+    return conflictLogs[actualIdx];
 }
 
-// ==================== THUẬT TOÁN TÁI LẬP LỊCH TRÁNH TÀU (MEET & PASS / SIDING) ====================
-void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
-    for (TrainNode* t1 = head; t1 != nullptr; t1 = t1->getNextTrain()) {
-        for (TrainNode* t2 = t1->getNextTrain(); t2 != nullptr; t2 = t2->getNextTrain()) {
-            
-            StopScheduleNode* s1 = t1->getHeadSchedule();
-            while (s1 != nullptr) {
-                StopScheduleNode* s2 = t2->getHeadSchedule();
-                while (s2 != nullptr) {
+// Tìm ray phụ trống từ ray 2 đến maxTracks tại ga stationID
+int TrainList::findAvailableSidingTrack(int stationID, int arr, int dep, int maxTracks, TrainNode* excludeTrain) const {
+    if (maxTracks <= 1) return -1;
+
+    const int HEADWAY = 10; // Khoảng đệm an toàn
+
+    for (int candidateTrack = 2; candidateTrack <= maxTracks; ++candidateTrack) {
+        bool occupied = false;
+        for (TrainNode* tr = head; tr != nullptr; tr = tr->getNextTrain()) {
+            if (tr == excludeTrain) continue;
+
+            for (StopScheduleNode* st = tr->getHeadSchedule(); st != nullptr; st = st->getNextStop()) {
+                if (st->getStationID() == stationID && st->getTrackUsed() == candidateTrack) {
                     
-                    // Nếu 2 tàu cùng dừng đỗ tại cùng 1 Ga
-                    if (s1->getStationID() == s2->getStationID()) {
-                        int startOverlap = max(s1->getArrivalMinute(), s2->getArrivalMinute());
-                        int endOverlap = min(s1->getDepartureMinute(), s2->getDepartureMinute());
+                    // Dùng std::max và std::min có cộng HEADWAY
+                    int overlapStart = std::max(arr, st->getArrivalMinute());
+                    int overlapEnd   = std::min(dep + HEADWAY, st->getDepartureMinute() + HEADWAY);
 
-                        // Nếu thời gian đỗ giao thoa trùng nhau và cả 2 cùng đăng ký đỗ tại Ray chính (Ray 1)
-                        if (startOverlap < endOverlap && s1->getTrackUsed() == 1 && s2->getTrackUsed() == 1) {
-                            // Tái lập lịch: Tự động chuyển Tàu 2 sang đỗ ở Ray 2 (Ray phụ) để tránh đụng độ
-                            s2->setTrackUsed(2);
-                        }
+                    if (overlapStart < overlapEnd) {
+                        occupied = true;
+                        break;
                     }
-                    s2 = s2->getNextStop();
                 }
-                s1 = s1->getNextStop();
+            }
+            if (occupied) break;
+        }
+        if (!occupied) return candidateTrack;
+    }
+    return -1;
+}
+
+// ==================== THUẬT TOÁN TÁI LẬP LỊCH TRÁNH TÀU ĐA LƯỢT ====================
+void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
+    if (!stationList) return;
+
+    const int SAFETY_HEADWAY = 10; // Khoảng cách an toàn tối thiểu (10 phút)
+    const int MAX_PASSES = 10;     // Giới hạn vòng lặp giải tỏa domino
+    int passCount = 0;
+    bool conflictFound = false;
+
+    do {
+        conflictFound = false;
+        passCount++;
+
+        for (TrainNode* t1 = head; t1 != nullptr; t1 = t1->getNextTrain()) {
+            for (TrainNode* t2 = t1->getNextTrain(); t2 != nullptr; t2 = t2->getNextTrain()) {
+
+                StopScheduleNode* s1 = t1->getHeadSchedule();
+                while (s1 != nullptr) {
+                    StopScheduleNode* s2 = t2->getHeadSchedule();
+
+                    while (s2 != nullptr) {
+                        // =========================================================================
+                        // TRƯỜNG HỢP 1: XUNG ĐỘT CÙNG GA CÙNG THỜI ĐIỂM & CÙNG RAY (Station Conflict)
+                        // =========================================================================
+                        if (s1->getStationID() == s2->getStationID() && s1->getTrackUsed() == s2->getTrackUsed()) {
+                            
+                            // Sử dụng std::max / std::min có cộng khoảng đệm an toàn
+                            int startOverlap = std::max(s1->getArrivalMinute(), s2->getArrivalMinute());
+                            int endOverlap   = std::min(s1->getDepartureMinute() + SAFETY_HEADWAY, 
+                                                        s2->getDepartureMinute() + SAFETY_HEADWAY);
+
+                            // Phát hiện cấn giờ an toàn tại ga
+                            if (startOverlap < endOverlap) {
+                                // Phân định tàu nhường: Priority trước, FCFS sau
+                                bool t2Yields = true;
+                                if (t1->getPriority() != t2->getPriority()) {
+                                    t2Yields = (t2->getPriority() > t1->getPriority());
+                                } else {
+                                    t2Yields = (s2->getArrivalMinute() >= s1->getArrivalMinute());
+                                }
+
+                                TrainNode* yieldTrain = t2Yields ? t2 : t1;
+                                TrainNode* prioTrain  = t2Yields ? t1 : t2;
+                                StopScheduleNode* yieldStop = t2Yields ? s2 : s1;
+                                StopScheduleNode* prioStop  = t2Yields ? s1 : s2;
+
+                                StationNode* currStation = stationList->findStationByID(yieldStop->getStationID());
+                                int maxTracks = currStation ? currStation->getMaxTracks() : 1;
+
+                                // Dò ray phụ trống tại ga hiện tại
+                                int freeSiding = findAvailableSidingTrack(
+                                    yieldStop->getStationID(), yieldStop->getArrivalMinute(),
+                                    yieldStop->getDepartureMinute(), maxTracks, yieldTrain
+                                );
+
+                                if (freeSiding != -1) {
+                                    // Ga có ray phụ -> Dạt vào ray phụ an toàn
+                                    yieldStop->setTrackUsed(freeSiding);
+                                    conflictFound = true;
+                                    addConflictLog("[Ga " + std::to_string(yieldStop->getStationID()) + "] " +
+                                                   yieldTrain->getTrainCode() + " (P" + std::to_string(yieldTrain->getPriority()) +
+                                                   ") vao Ray " + std::to_string(freeSiding) + " nhuong " + prioTrain->getTrainCode());
+                                } else {
+                                    // Hết ray phụ hoặc ga chỉ có 1 ray -> Đẩy lùi lịch trình về ga trước
+                                    StopScheduleNode* prevStop = yieldTrain->findPreviousStop(yieldStop);
+                                    int extraWait = std::max(0, prioStop->getDepartureMinute() - yieldStop->getArrivalMinute() + SAFETY_HEADWAY);
+
+                                    if (extraWait > 0) {
+                                        if (prevStop != nullptr) {
+                                            // Lùi giờ khởi hành tại ga trước
+                                            prevStop->setDepartureMinute(prevStop->getDepartureMinute() + extraWait);
+                                            
+                                            StationNode* prevSt = stationList->findStationByID(prevStop->getStationID());
+                                            int prevMaxTracks = prevSt ? prevSt->getMaxTracks() : 1;
+                                            
+                                            // Kiểm tra ray trống tại ga trước trong khung giờ mới
+                                            int prevSiding = findAvailableSidingTrack(
+                                                prevStop->getStationID(), prevStop->getArrivalMinute(),
+                                                prevStop->getDepartureMinute(), prevMaxTracks, yieldTrain
+                                            );
+                                            
+                                            if (prevSiding != -1) {
+                                                prevStop->setTrackUsed(prevSiding); // Có ray phụ -> vào ray phụ
+                                            }
+                                            // Lan truyền trễ
+                                            yieldTrain->applyDelayPropagation(yieldStop->getStationID(), extraWait, true);
+                                            addConflictLog("[Ga 1-Ray " + std::to_string(yieldStop->getStationID()) + "] Giu " +
+                                                           yieldTrain->getTrainCode() + " tai Ga " + std::to_string(prevStop->getStationID()) +
+                                                           " +" + std::to_string(extraWait) + "p nhuong " + prioTrain->getTrainCode());
+                                        } else {
+                                            // Trường hợp biên: Tàu đang ở ga xuất phát đầu tiên, không thể lùi được nữa
+                                            yieldTrain->applyDelayPropagation(yieldStop->getStationID(), extraWait, true);
+                                            addConflictLog("[Ga Dau " + std::to_string(yieldStop->getStationID()) + "] Lui khoi hanh " +
+                                                           yieldTrain->getTrainCode() + " +" + std::to_string(extraWait) + "p");
+                                        }
+                                        conflictFound = true; // Kích hoạt Multi-pass lượt kế tiếp
+                                    }
+                                }
+                            }
+                        }
+
+                        // =========================================================================
+                        // TRƯỜNG HỢP 2: XUNG ĐỘT KHU GIAN ĐƯỜNG ĐƠN (Block Section Conflict)
+                        // =========================================================================
+                        StopScheduleNode* nextS1 = s1->getNextStop();
+                        StopScheduleNode* nextS2 = s2->getNextStop();
+
+                        if (nextS1 != nullptr && nextS2 != nullptr) {
+                            bool isHeadOn  = (s1->getStationID() == nextS2->getStationID() && nextS1->getStationID() == s2->getStationID());
+                            bool isRearEnd = (s1->getStationID() == s2->getStationID() && nextS1->getStationID() == nextS2->getStationID());
+
+                            if (isHeadOn || isRearEnd) {
+                                int t1_start = s1->getDepartureMinute();
+                                int t1_end   = nextS1->getArrivalMinute();
+                                int t2_start = s2->getDepartureMinute();
+                                int t2_end   = nextS2->getArrivalMinute();
+
+                                // Kiểm tra 2 tàu có cùng xuất hiện trên khu gian không
+                                int trackOverlapStart = std::max(t1_start, t2_start);
+                                int trackOverlapEnd   = std::min(t1_end, t2_end);
+
+                                if (trackOverlapStart < trackOverlapEnd) {
+                                    // Phân định tàu nhường
+                                    bool t2Yields = true;
+                                    if (t1->getPriority() != t2->getPriority()) {
+                                        t2Yields = (t2->getPriority() > t1->getPriority());
+                                    } else {
+                                        t2Yields = (t2_start >= t1_start);
+                                    }
+
+                                    TrainNode* yieldTrain = t2Yields ? t2 : t1;
+                                    TrainNode* prioTrain  = t2Yields ? t1 : t2;
+                                    StopScheduleNode* yieldStop = t2Yields ? s2 : s1;
+                                    StopScheduleNode* yieldNext = t2Yields ? nextS2 : nextS1;
+                                    
+                                    int prioEnd  = t2Yields ? t1_end : t2_end;
+                                    int yieldDep = t2Yields ? t2_start : t1_start;
+
+                                    int extraWaitTime = std::max(0, prioEnd - yieldDep + SAFETY_HEADWAY);
+
+                                    if (extraWaitTime > 0) {
+                                        // Cộng giờ chờ tại ga trước khi vào khu gian
+                                        yieldStop->setDepartureMinute(yieldStop->getDepartureMinute() + extraWaitTime);
+
+                                        StationNode* waitSt = stationList->findStationByID(yieldStop->getStationID());
+                                        int maxTracks = waitSt ? waitSt->getMaxTracks() : 1;
+                                        
+                                        // Tìm ray phụ trong thời gian chờ
+                                        int freeSiding = findAvailableSidingTrack(
+                                            yieldStop->getStationID(), yieldStop->getArrivalMinute(),
+                                            yieldStop->getDepartureMinute(), maxTracks, yieldTrain
+                                        );
+                                        
+                                        if (freeSiding != -1) yieldStop->setTrackUsed(freeSiding);
+
+                                        // Lan truyền trễ
+                                        yieldTrain->applyDelayPropagation(yieldNext->getStationID(), extraWaitTime, true);
+
+                                        conflictFound = true;
+                                        addConflictLog("[Khu gian " + std::to_string(yieldStop->getStationID()) + "->" +
+                                                       std::to_string(yieldNext->getStationID()) + "] " + yieldTrain->getTrainCode() +
+                                                       " (P" + std::to_string(yieldTrain->getPriority()) + ") cho " +
+                                                       prioTrain->getTrainCode() + " +" + std::to_string(extraWaitTime) +
+                                                       "p (Xuat phat: " + formatTimeHHMM(yieldStop->getDepartureMinute()) + ")");
+                                    }
+                                }
+                            }
+                        }
+
+                        s2 = s2->getNextStop();
+                    }
+                    s1 = s1->getNextStop();
+                }
             }
         }
-    }
+    } while (conflictFound && passCount < MAX_PASSES);
 }
 
 // ==================== THUẬT TOÁN DELAY PROPAGATION TRỌN GÓI ====================
@@ -1509,25 +2577,23 @@ bool TrainList::applyDelayAndReschedule(const string& trainCode, int fromStation
     TrainNode* train = findTrainByCode(trainCode);
     if (!train) return false;
 
-    // BƯỚC 1: Dời giờ đến/đi cho tất cả các ga tiếp theo của tàu bị sự cố
-    bool ok = train->applyDelayPropagation(fromStationID, delayMinutes);
-    
-    // BƯỚC 2: Tự động tái lập lịch tránh tàu ngay sau khi mốc thời gian bị thay đổi
+    addConflictLog("[Su co] Tau " + trainCode + " bi tre +" + to_string(delayMinutes) + "p tu Ga " + to_string(fromStationID));
+    bool ok = train->applyDelayPropagation(fromStationID, delayMinutes, true);
+
     if (ok) {
         resolveConflictAndScheduleSiding(stationList);
     }
     return ok;
 }
 
-
 ========================================
 File: .\TrainList.h
 ========================================
 
 #pragma once
-
 #include <iostream>
 #include <string>
+#include <vector>
 #include "TrainNode.h"
 
 class StationList;
@@ -1535,36 +2601,42 @@ class StationList;
 class TrainList {
 private:
     TrainNode* head;
+    TrainNode* tail;
+
+    // Thay thế vector bằng Circular Buffer tĩnh (tối đa 8 thông báo)
+    static const int MAX_LOGS = 8;
+    std::string conflictLogs[MAX_LOGS];
+    int logStart; // Vị trí phần tử cũ nhất
+    int logCount; // Số lượng thông báo hiện có (0..MAX_LOGS)
+
+    // Hàm phụ trợ: Tìm một đường ray phụ còn trống tại ga trong khoảng [arr, dep]
+    int findAvailableSidingTrack(int stationID, int arr, int dep, int maxTracks, TrainNode* excludeTrain) const;
 
 public:
     TrainList();
     ~TrainList();
-    void clear(); // Dọn dẹp bộ nhớ dynamic
-    
-    // Các hàm quản lý danh sách theo cấu trúc gốc của bạn
+    void clear();
+
     TrainNode* getHead() const;
-    void addTrain(const std::string& code, int direction);
+    void addTrain(const std::string& code, int direction, int priority = -1);
     TrainNode* findTrainByCode(const std::string& code) const;
     void addCarriageToTrain(const std::string& code, int cNo, const std::string& type, int seats);
     void addStopScheduleToTrain(const std::string& code, int stID, int arr, int dep, int track);
 
-    // Bổ sung: Hiển thị danh sách tàu
-    void displayAllTrains() const;
-    
-    // Bổ sung: Thuật toán Tái lập lịch tránh tàu / Phân bổ ray phụ khi phát hiện xung đột
     void resolveConflictAndScheduleSiding(StationList* stationList);
-
-    // Bổ sung: Kích hoạt Lan truyền trễ + Tự động tái lập lịch tránh tàu liên đới
     bool applyDelayAndReschedule(const std::string& trainCode, int fromStationID, int delayMinutes, StationList* stationList);
-};
 
+    // Giao diện truy xuất log cho màn hình HUD (không dùng vector)
+    void addConflictLog(const std::string& logMsg);
+    int getLogCount() const { return logCount; }
+    std::string getLog(int index) const; // Lấy dòng log thứ index (0: cũ nhất -> logCount - 1: mới nhất)
+};
 
 ========================================
 File: .\TrainNode.h
 ========================================
 
 #pragma once
-
 #include <string>
 #include "CarriageNode.h"
 #include "StopScheduleNode.h"
@@ -1573,13 +2645,25 @@ class TrainNode {
 private:
     std::string trainCode;
     int direction; // 1: Nam, 0: Bac
+    int priority;  // 1: Tau khach nhanh SE, 2: Tau thuong TN, 3: Tau hang
     CarriageNode* headCarriage;
+    CarriageNode* tailCarriage;
     StopScheduleNode* headSchedule;
+    StopScheduleNode* tailSchedule;
     TrainNode* nextTrain;
 
 public:
-    TrainNode(const std::string& code, int dir)
-        : trainCode(code), direction(dir), headCarriage(nullptr), headSchedule(nullptr), nextTrain(nullptr) {}
+    static int inferPriorityFromCode(const std::string& code) {
+        if (code.rfind("SE", 0) == 0) return 1; // Ưu tiên cao nhất: SE1, SE2, SE3, SE4...
+        if (code.rfind("TN", 0) == 0) return 2; // Ưu tiên trung bình: TN1, TN2...
+        return 3;                               // Ưu tiên thấp nhất: Tàu hàng (HH, GS...)
+    }
+
+    TrainNode(const std::string& code, int dir, int prio = -1)
+        : trainCode(code), direction(dir), 
+          priority(prio > 0 ? prio : inferPriorityFromCode(code)),
+          headCarriage(nullptr), tailCarriage(nullptr),
+          headSchedule(nullptr), tailSchedule(nullptr), nextTrain(nullptr) {}
 
     ~TrainNode() {
         while (headCarriage) {
@@ -1597,47 +2681,61 @@ public:
     // Getters
     std::string getTrainCode() const { return trainCode; }
     int getDirection() const { return direction; }
+    int getPriority() const { return priority; }
     CarriageNode* getHeadCarriage() const { return headCarriage; }
     StopScheduleNode* getHeadSchedule() const { return headSchedule; }
+    StopScheduleNode* getTailSchedule() const { return tailSchedule; }
     TrainNode* getNextTrain() const { return nextTrain; }
 
     // Setters
+    void setPriority(int prio) { priority = prio; }
     void setNextTrain(TrainNode* next) { nextTrain = next; }
-    void setHeadCarriage(CarriageNode* head) { headCarriage = head; }
-    void setHeadSchedule(StopScheduleNode* head) { headSchedule = head; }
 
+    // Chèn toa xe độ phức tạp O(1)
     void addCarriage(int cNo, const std::string& type, int seats) {
         CarriageNode* newNode = new CarriageNode(cNo, type, seats);
         if (!headCarriage) {
-            headCarriage = newNode;
+            headCarriage = tailCarriage = newNode;
             return;
         }
-        CarriageNode* temp = headCarriage;
-        while (temp->getNextCarriage()) temp = temp->getNextCarriage();
-        temp->setNextCarriage(newNode);
+        tailCarriage->setNextCarriage(newNode);
+        tailCarriage = newNode;
     }
 
+    // Chèn lịch dừng độ phức tạp O(1)
     void addSchedule(int stID, int arr, int dep, int track) {
         StopScheduleNode* newNode = new StopScheduleNode(stID, arr, dep, track);
         if (!headSchedule) {
-            headSchedule = newNode;
+            headSchedule = tailSchedule = newNode;
             return;
         }
-        StopScheduleNode* temp = headSchedule;
-        while (temp->getNextStop()) temp = temp->getNextStop();
-        temp->setNextStop(newNode);
+        tailSchedule->setNextStop(newNode);
+        tailSchedule = newNode;
     }
 
-    // 1. Lan truyền dời giờ các ga tiếp theo khi xảy ra trễ
-    bool applyDelayPropagation(int fromStationID, int delayMinutes) {
+    // Tìm ga dừng liền trước một ga cụ thể trong hành trình của tàu
+    StopScheduleNode* findPreviousStop(StopScheduleNode* targetStop) const {
+        if (!headSchedule || headSchedule == targetStop) return nullptr;
+        StopScheduleNode* curr = headSchedule;
+        while (curr && curr->getNextStop() != targetStop) {
+            curr = curr->getNextStop();
+        }
+        return curr;
+    }
+
+    // Lan truyền dời giờ các ga tiếp theo khi xảy ra trễ
+    bool applyDelayPropagation(int fromStationID, int delayMinutes, bool delayArrivalAtFirst = true) {
         StopScheduleNode* curr = headSchedule;
         bool found = false;
 
         while (curr != nullptr) {
             if (curr->getStationID() == fromStationID) {
                 found = true;
-            }
-            if (found) {
+                if (delayArrivalAtFirst) {
+                    curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
+                }
+                curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
+            } else if (found) {
                 curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
                 curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
             }
@@ -1655,4 +2753,3 @@ public:
         return 0;
     }
 };
-

@@ -2,17 +2,15 @@
 #include <string>
 #include "CarriageNode.h"
 #include "StopScheduleNode.h"
+#include "LinkedList.h"
 
-class TrainNode {
-private:
+struct Train {
     std::string trainCode;
     int direction; // 1: Nam, 0: Bac
     int priority;  // 1: Tau khach nhanh SE, 2: Tau thuong TN, 3: Tau hang
-    CarriageNode* headCarriage;
-    CarriageNode* tailCarriage;
-    StopScheduleNode* headSchedule;
-    StopScheduleNode* tailSchedule;
-    TrainNode* nextTrain;
+    LinkedList<Carriage*> carriages;
+    LinkedList<StopSchedule*> schedule;
+    unsigned long scheduleRevision;
 
 public:
     static int inferPriorityFromCode(const std::string& code) {
@@ -21,22 +19,21 @@ public:
         return 3;                               // Ưu tiên thấp nhất: Tàu hàng (HH, GS...)
     }
 
-    TrainNode(const std::string& code, int dir, int prio = -1)
+    Train(const std::string& code, int dir, int prio = -1)
         : trainCode(code), direction(dir), 
           priority(prio > 0 ? prio : inferPriorityFromCode(code)),
-          headCarriage(nullptr), tailCarriage(nullptr),
-          headSchedule(nullptr), tailSchedule(nullptr), nextTrain(nullptr) {}
+          scheduleRevision(0) {}
 
-    ~TrainNode() {
-        while (headCarriage) {
-            CarriageNode* temp = headCarriage;
-            headCarriage = headCarriage->getNextCarriage();
-            delete temp;
+    ~Train() {
+        LinkedList<Carriage*>::Node* carriage = carriages.getHead();
+        while (carriage) {
+            delete carriage->data;
+            carriage = carriage->next;
         }
-        while (headSchedule) {
-            StopScheduleNode* temp = headSchedule;
-            headSchedule = headSchedule->getNextStop();
-            delete temp;
+        LinkedList<StopSchedule*>::Node* stop = schedule.getHead();
+        while (stop) {
+            delete stop->data;
+            stop = stop->next;
         }
     }
 
@@ -44,74 +41,71 @@ public:
     std::string getTrainCode() const { return trainCode; }
     int getDirection() const { return direction; }
     int getPriority() const { return priority; }
-    CarriageNode* getHeadCarriage() const { return headCarriage; }
-    StopScheduleNode* getHeadSchedule() const { return headSchedule; }
-    StopScheduleNode* getTailSchedule() const { return tailSchedule; }
-    TrainNode* getNextTrain() const { return nextTrain; }
+    LinkedList<Carriage*>::Node* getHeadCarriage() const { return carriages.getHead(); }
+    LinkedList<StopSchedule*>::Node* getHeadSchedule() const { return schedule.getHead(); }
+    LinkedList<StopSchedule*>::Node* getTailSchedule() const { return schedule.getTail(); }
+    unsigned long getScheduleRevision() const { return scheduleRevision; }
 
     // Setters
     void setPriority(int prio) { priority = prio; }
-    void setNextTrain(TrainNode* next) { nextTrain = next; }
+    void bumpScheduleRevision() { ++scheduleRevision; }
 
     // Chèn toa xe độ phức tạp O(1)
     void addCarriage(int cNo, const std::string& type, int seats) {
-        CarriageNode* newNode = new CarriageNode(cNo, type, seats);
-        if (!headCarriage) {
-            headCarriage = tailCarriage = newNode;
-            return;
-        }
-        tailCarriage->setNextCarriage(newNode);
-        tailCarriage = newNode;
+        carriages.pushBack(new CarriageNode(cNo, type, seats));
     }
 
     // Chèn lịch dừng độ phức tạp O(1)
     void addSchedule(int stID, int arr, int dep, int track) {
-        StopScheduleNode* newNode = new StopScheduleNode(stID, arr, dep, track);
-        if (!headSchedule) {
-            headSchedule = tailSchedule = newNode;
-            return;
-        }
-        tailSchedule->setNextStop(newNode);
-        tailSchedule = newNode;
+        schedule.pushBack(new StopScheduleNode(stID, arr, dep, track));
     }
 
     // Tìm ga dừng liền trước một ga cụ thể trong hành trình của tàu
     StopScheduleNode* findPreviousStop(StopScheduleNode* targetStop) const {
-        if (!headSchedule || headSchedule == targetStop) return nullptr;
-        StopScheduleNode* curr = headSchedule;
-        while (curr && curr->getNextStop() != targetStop) {
-            curr = curr->getNextStop();
+        LinkedList<StopSchedule*>::Node* curr = schedule.getHead();
+        if (!curr || curr->data == targetStop) return nullptr;
+        while (curr && (!curr->next || curr->next->data != targetStop)) {
+            curr = curr->next;
         }
-        return curr;
+        return curr ? curr->data : nullptr;
     }
 
     // Lan truyền dời giờ các ga tiếp theo khi xảy ra trễ
     bool applyDelayPropagation(int fromStationID, int delayMinutes, bool delayArrivalAtFirst = true) {
-        StopScheduleNode* curr = headSchedule;
+        LinkedList<StopSchedule*>::Node* curr = schedule.getHead();
         bool found = false;
 
         while (curr != nullptr) {
-            if (curr->getStationID() == fromStationID) {
+            StopScheduleNode* stop = curr->data;
+            if (stop->getStationID() == fromStationID) {
                 found = true;
                 if (delayArrivalAtFirst) {
-                    curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
+                    stop->setArrivalMinute(stop->getArrivalMinute() + delayMinutes);
                 }
-                curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
+                stop->setDepartureMinute(stop->getDepartureMinute() + delayMinutes);
             } else if (found) {
-                curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
-                curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
+                stop->setArrivalMinute(stop->getArrivalMinute() + delayMinutes);
+                stop->setDepartureMinute(stop->getDepartureMinute() + delayMinutes);
             }
-            curr = curr->getNextStop();
+            curr = curr->next;
         }
         return found;
     }
 
     int getCarriageSeats(int carriageNo) const {
-        CarriageNode* c = headCarriage;
-        while (c) {
-            if (c->getCarriageNo() == carriageNo) return c->getTotalSeats();
-            c = c->getNextCarriage();
+        CarriageNode* carriage = findCarriage(carriageNo);
+        return carriage ? carriage->getTotalSeats() : 0;
+    }
+
+    CarriageNode* findCarriage(int carriageNo) const {
+        LinkedList<Carriage*>::Node* current = carriages.getHead();
+        while (current) {
+            CarriageNode* carriage = current->data;
+            if (carriage->getCarriageNo() == carriageNo) return carriage;
+            current = current->next;
         }
-        return 0;
+        return nullptr;
     }
 };
+
+typedef Train TrainNode;

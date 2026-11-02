@@ -39,13 +39,13 @@ void FileManager::saveStations(const string& filename, const StationList& statio
     ofstream outFile(filename);
     if (!outFile.is_open()) return;
 
-    StationNode* st = stationList.getHead();
-    while (st != nullptr) {
+    for (LinkedList<StationNode*>::Node* station = stationList.getHead();
+         station != nullptr; station = station->next) {
+        StationNode* st = station->data;
         outFile << st->getStationID() << "|"
                 << st->getName() << "|"
                 << st->getKmMarker() << "|"
                 << st->getMaxTracks() << "\n";
-        st = st->getNextStation();
     }
     outFile.close();
 }
@@ -111,26 +111,25 @@ void FileManager::saveTrains(const string& filename, const TrainList& trainList)
     ofstream outFile(filename);
     if (!outFile.is_open()) return;
 
-    TrainNode* tr = trainList.getHead();
-    while (tr != nullptr) {
+    for (LinkedList<TrainNode*>::Node* trainNode = trainList.getHead();
+         trainNode != nullptr; trainNode = trainNode->next) {
+        TrainNode* tr = trainNode->data;
         // Lưu kèm độ ưu tiên vào cột thứ 3: Mã Tàu | Hướng chạy | Độ ưu tiên
         outFile << tr->getTrainCode() << "|" 
                 << tr->getDirection() << "|" 
                 << tr->getPriority() << "\n";
 
-        CarriageNode* c = tr->getHeadCarriage();
-        while (c != nullptr) {
+        for (LinkedList<CarriageNode*>::Node* carriage = tr->getHeadCarriage();
+             carriage != nullptr; carriage = carriage->next) {
+            CarriageNode* c = carriage->data;
             outFile << "CARRIAGE|" << c->getCarriageNo() << "|" << c->getType() << "|" << c->getTotalSeats() << "\n";
-            c = c->getNextCarriage();
         }
 
-        StopScheduleNode* s = tr->getHeadSchedule();
-        while (s != nullptr) {
+        for (LinkedList<StopScheduleNode*>::Node* stop = tr->getHeadSchedule();
+             stop != nullptr; stop = stop->next) {
+            StopScheduleNode* s = stop->data;
             outFile << "STOP|" << s->getStationID() << "|" << s->getArrivalMinute() << "|" << s->getDepartureMinute() << "|" << s->getTrackUsed() << "\n";
-            s = s->getNextStop();
         }
-
-        tr = tr->getNextTrain();
     }
     outFile.close();
 }
@@ -160,15 +159,15 @@ void FileManager::saveTickets(const string& filename, const TicketList& ticketLi
     ofstream outFile(filename);
     if (!outFile.is_open()) return;
 
-    TicketNode* tk = ticketList.getHead();
-    while (tk != nullptr) {
+    for (LinkedList<TicketNode*>::Node* ticket = ticketList.getHead();
+         ticket != nullptr; ticket = ticket->next) {
+        TicketNode* tk = ticket->data;
         outFile << tk->getTicketID() << "|"
                 << tk->getTrainCode() << "|"
                 << tk->getCarriageNo() << "|"
                 << tk->getSeatNo() << "|"
                 << tk->getFromStationID() << "|"
                 << tk->getToStationID() << "\n";
-        tk = tk->getNextTicket();
     }
     outFile.close();
 }

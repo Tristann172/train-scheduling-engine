@@ -107,17 +107,12 @@ static void drawThickLine(sf::RenderWindow& window, sf::Vector2f p1, sf::Vector2
 // ==================== 3. HÀM TÍNH TỌA ĐỘ KM MƯỢT THEO THỜI GIAN THỰC ====================
 static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList, float currentMinute, int& trackUsedOut) {
     trackUsedOut = 0;
-    StopScheduleNode* firstStop = train->getHeadSchedule();
+    LinkedList<StopScheduleNode*>::Node* firstStopNode = train->getHeadSchedule();
+    StopScheduleNode* firstStop = firstStopNode ? firstStopNode->data : nullptr;
     if (!firstStop) return -1.0;
 
-    // Truy xuất trực tiếp ga cuối trong O(1) qua con trỏ tailSchedule
-    StopScheduleNode* lastStop = train->getTailSchedule();
-    if (!lastStop) {
-        lastStop = firstStop;
-        while (lastStop->getNextStop() != nullptr) {
-            lastStop = lastStop->getNextStop();
-        }
-    }
+    LinkedList<StopScheduleNode*>::Node* lastStopNode = train->getTailSchedule();
+    StopScheduleNode* lastStop = lastStopNode ? lastStopNode->data : nullptr;
 
     // 1. Chưa tới giờ xuất phát -> Tàu chờ sẵn tại Ga Đầu
     if (currentMinute < static_cast<float>(firstStop->getArrivalMinute())) {
@@ -138,7 +133,9 @@ static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList,
     }
 
     // 3. Kiểm tra tàu đang đỗ tại ga hoặc đang di chuyển giữa 2 ga (Khu gian)
-    for (StopScheduleNode* curr = firstStop; curr != nullptr; curr = curr->getNextStop()) {
+    for (LinkedList<StopScheduleNode*>::Node* stopNode = firstStopNode;
+         stopNode != nullptr; stopNode = stopNode->next) {
+        StopScheduleNode* curr = stopNode->data;
         float arr = static_cast<float>(curr->getArrivalMinute());
         float dep = static_cast<float>(curr->getDepartureMinute());
 
@@ -150,7 +147,8 @@ static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList,
             }
         }
 
-        StopScheduleNode* nextStop = curr->getNextStop();
+        StopScheduleNode* nextStop =
+            stopNode->next ? stopNode->next->data : nullptr;
         if (nextStop != nullptr) {
             float nextArr = static_cast<float>(nextStop->getArrivalMinute());
             if (currentMinute > dep && currentMinute < nextArr) {
@@ -186,7 +184,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
     // Tìm mốc Km lớn nhất trên tuyến để chuẩn hóa tỷ lệ vẽ
     double maxKm = 100.0;
-    for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+    for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+         station != nullptr; station = station->next) {
+        StationNode* st = station->data;
         if (st->getKmMarker() > maxKm) maxKm = st->getKmMarker();
     }
     if (maxKm <= 0.0) maxKm = 100.0;
@@ -228,9 +228,12 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
     // Tự động lấy mốc thời gian bắt đầu sớm nhất của các đoàn tàu (trừ hao 15 phút chuẩn bị)
     int earliestMinute = 1440;
-    for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+    for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+         trainNode != nullptr; trainNode = trainNode->next) {
+        TrainNode* tr = trainNode->data;
         if (tr->getHeadSchedule()) {
-            earliestMinute = std::min(earliestMinute, tr->getHeadSchedule()->getArrivalMinute());
+            earliestMinute = std::min(earliestMinute,
+                tr->getHeadSchedule()->data->getArrivalMinute());
         }
     }
     float startMinute = (earliestMinute < 1440) ? static_cast<float>(std::max(0, earliestMinute - 15)) : 0.0f;
@@ -284,14 +287,21 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         }
 
         // ==================== B. VẼ NHÀ GA, ĐƯỜNG RAY PHỤ & ĐÈN TÍN HIỆU ====================
-        for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+        for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+             station != nullptr; station = station->next) {
+            StationNode* st = station->data;
             float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
             int maxTracks = st->getMaxTracks();
 
             // Kiểm tra có đoàn tàu nào đang dừng đỗ tại ga này không để bật đèn tín hiệu Đỏ
             bool stationOccupied = false;
-            for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
-                for (StopScheduleNode* sc = tr->getHeadSchedule(); sc != nullptr; sc = sc->getNextStop()) {
+            for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+                 trainNode != nullptr; trainNode = trainNode->next) {
+                TrainNode* tr = trainNode->data;
+                for (LinkedList<StopScheduleNode*>::Node* stopNode =
+                         tr->getHeadSchedule(); stopNode != nullptr;
+                     stopNode = stopNode->next) {
+                    StopScheduleNode* sc = stopNode->data;
                     if (sc->getStationID() == st->getStationID()) {
                         if (currentMinute >= static_cast<float>(sc->getArrivalMinute()) &&
                             currentMinute <= static_cast<float>(sc->getDepartureMinute())) {
@@ -386,7 +396,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         // ==================== C. VẼ ĐƯỜNG RAY CHÍNH & CÁC TÂM GA ====================
         window.draw(mainTrackVA);
 
-        for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+        for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+             station != nullptr; station = station->next) {
+            StationNode* st = station->data;
             float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
 
             sf::CircleShape outerNode(9.0f);
@@ -405,7 +417,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         }
 
         // ==================== D. VẼ CÁC ĐOÀN TÀU BO GÓC, ĐỔ BÓNG & NỘI SUY LERP ====================
-        for (TrainNode* train = trainList->getHead(); train != nullptr; train = train->getNextTrain()) {
+        for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+             trainNode != nullptr; trainNode = trainNode->next) {
+            TrainNode* train = trainNode->data;
             int trackUsed = 0;
             double currentKm = calculateTrainKmSmooth(train, stationList, currentMinute, trackUsed);
 
@@ -566,7 +580,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         window.draw(teleTitle);
 
         float ty = WINDOW_HEIGHT - teleH + 18.0f;
-        for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+        for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+             trainNode != nullptr; trainNode = trainNode->next) {
+            TrainNode* tr = trainNode->data;
             int trk = 0;
             double km = calculateTrainKmSmooth(tr, stationList, currentMinute, trk);
             string statusStr = (trk == 0) ? "Chay khu gian" : (trk == 1 ? "Do Ray Chinh (R1)" : "Tranh Ray Phu (R" + to_string(trk) + ")");

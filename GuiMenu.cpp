@@ -145,7 +145,7 @@ void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, Tick
         return;
     }
 
-    // Gọi hàm checkCarriageSeats (O(M)) trả về bool để chặn ngay nếu sai hướng hoặc không qua ga
+    // Kiểm tra sơ đồ ghế bằng truy vấn cây phân đoạn theo từng ghế.
     bool seatFree[129];
     if (!ticketList.checkCarriageSeats(&stationList, &trainList, trainCode, carriageNo, fromSt, toSt, seatFree, totalSeats)) {
         outputLog = "-> [LOI HANH TRINH] Tau " + trainCode + " KHONG phuc vu chang Ga " + to_string(fromSt) +
@@ -297,9 +297,9 @@ void GuiMenu::applyDelayUI(StationList& stationList, TrainList& trainList, sf::F
             int delayMins = stoi(strDelay);
             if (trainList.applyDelayAndReschedule(trainCode, stID, delayMins, &stationList)) {
                 FileManager::saveTrains("trains.txt", trainList);
-                outputLog = "=== KET QUA LAN TRUYEN TRE & TAI LAP LICH (MULTI-PASS) ===\n\n";
+                outputLog = "=== KET QUA LAN TRUYEN TRE & TAI LAP LICH (EVENT-DRIVEN) ===\n\n";
                 outputLog += " -> Da cong them " + to_string(delayMins) + " phut cho tau " + trainCode + " tu Ga ID " + to_string(stID) + ".\n";
-                outputLog += " -> Da kich hoat thuat toan Multi-pass quet toan tuyen (xet Priority & maxTracks).\n\n";
+                outputLog += " -> Da kich hoat bo lap lich theo su kien (xet Priority & maxTracks).\n\n";
                 outputLog += "Cac xung dot vua duoc giai quyet:\n";
                 for (int i = 0; i < trainList.getLogCount(); ++i) {
                     outputLog += "   + " + trainList.getLog(i) + "\n";
@@ -369,7 +369,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
         "====================================================================\n"
         " * Thuat toan Uu tien Tau (Train Priority): SE (P1) > TN (P2) > Tau hang (P3).\n"
         " * Kiem soat Nang luc Ha tang (maxTracks): Tu dong giu tau o ga truoc neu ga xep chi co 1 ray.\n"
-        " * Giai toa Hieu ung Domino (Multi-pass Loop): Quet lap den khi toan tuyen sach xung dot.\n\n"
+        " * Giai toa xung dot theo dong su kien thoi gian, tu dong phan luong ray.\n\n"
         "-> Hay chon mot chuc nang o bang dieu khien ben trai. Dung con lan chuot de cuon noi dung dai.";
 
     float scrollOffsetY = 0.0f;
@@ -442,14 +442,15 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         switch (subBtn.actionID) {
                         case 1: {
                             outputLog = "=== DANH SACH NHA GA & NANG LUC HA TANG (MAX TRACKS) ===\n\n";
-                            StationNode* st = stationList.getHead();
-                            while (st) {
+                            for (LinkedList<StationNode*>::Node* station =
+                                     stationList.getHead();
+                                 station; station = station->next) {
+                                StationNode* st = station->data;
                                 string infraType = (st->getMaxTracks() == 1) ? " [Ga xep 1 ray - Khong the tranh tau]" : " [Ga co ray phu tranh tau]";
                                 outputLog += " * Ga ID: " + to_string(st->getStationID()) +
                                              " | Ten: " + st->getName() +
                                              " | Ly trinh: " + to_string(static_cast<int>(st->getKmMarker())) + " km" +
                                              " | So ray (maxTracks): " + to_string(st->getMaxTracks()) + infraType + "\n";
-                                st = st->getNextStation();
                             }
                             break;
                         }
@@ -487,32 +488,39 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         }
                         case 4: {
                             outputLog = "=== DANH SACH DOAN TAU & CAP DO UU TIEN (TRAIN PRIORITY) ===\n\n";
-                            TrainNode* tr = trainList.getHead();
-                            while (tr) {
+                            for (LinkedList<TrainNode*>::Node* train =
+                                     trainList.getHead();
+                                 train; train = train->next) {
+                                TrainNode* tr = train->data;
                                 string prioDesc = (tr->getPriority() == 1) ? "Uu tien 1 (Tau khach nhanh SE)" :
                                                   (tr->getPriority() == 2 ? "Uu tien 2 (Tau khach thuong TN)" : "Uu tien 3 (Tau hang)");
                                 outputLog += " * Ma Tau: " + tr->getTrainCode() +
                                              "  |  Cap do: " + prioDesc +
                                              "  |  Huong chay: " + (tr->getDirection() == 1 ? "Bac -> Nam (1)" : "Nam -> Bac (0)") + "\n";
-                                tr = tr->getNextTrain();
                             }
                             break;
                         }
                         case 5: {
                             outputLog = "=== BANG CHI TIET TOA XE & LICH TRINH DUNG DO (CUON CHUOT DE XEM TIEP) ===\n\n";
-                            TrainNode* tr = trainList.getHead();
-                            while (tr) {
+                            for (LinkedList<TrainNode*>::Node* train =
+                                     trainList.getHead();
+                                 train; train = train->next) {
+                                TrainNode* tr = train->data;
                                 outputLog += " [TAU " + tr->getTrainCode() + " - PRIORITY P" + to_string(tr->getPriority()) +
                                              " | Huong: " + (tr->getDirection() == 1 ? "Nam" : "Bac") + "]\n   * Danh sach Toa: ";
-                                CarriageNode* c = tr->getHeadCarriage();
-                                if (!c) outputLog += "(Chua co toa xe)";
-                                while (c) {
+                                LinkedList<CarriageNode*>::Node* carriage =
+                                    tr->getHeadCarriage();
+                                if (!carriage) outputLog += "(Chua co toa xe)";
+                                while (carriage) {
+                                    CarriageNode* c = carriage->data;
                                     outputLog += "[Toa " + to_string(c->getCarriageNo()) + ": " + c->getType() + " (" + to_string(c->getTotalSeats()) + " ghe)]  ";
-                                    c = c->getNextCarriage();
+                                    carriage = carriage->next;
                                 }
                                 outputLog += "\n   * Lich trinh cac ga:\n";
-                                StopScheduleNode* s = tr->getHeadSchedule();
-                                while (s) {
+                                LinkedList<StopScheduleNode*>::Node* stop =
+                                    tr->getHeadSchedule();
+                                while (stop) {
+                                    StopScheduleNode* s = stop->data;
                                     StationNode* stNode = stationList.findStationByID(s->getStationID());
                                     string stName = stNode ? stNode->getName() : ("Ga " + to_string(s->getStationID()));
                                     char buf[140];
@@ -523,10 +531,9 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                                              s->getTrackUsed(),
                                              (s->getTrackUsed() > 1 ? "(Ray phu tranh tau)" : "(Ray chinh)"));
                                     outputLog += string(buf);
-                                    s = s->getNextStop();
+                                    stop = stop->next;
                                 }
                                 outputLog += "--------------------------------------------------------------------------------\n";
-                                tr = tr->getNextTrain();
                             }
                             break;
                         }
@@ -588,16 +595,18 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         }
                         case 7: {
                             outputLog = "=== DANH SACH VE DA PHAT HANH TRONG HE THONG ===\n\n";
-                            TicketNode* tk = ticketList.getHead();
-                            if (!tk) outputLog += " (Chua co ve nao duoc dat trong he thong)\n";
-                            while (tk) {
+                            LinkedList<TicketNode*>::Node* ticket =
+                                ticketList.getHead();
+                            if (!ticket) outputLog += " (Chua co ve nao duoc dat trong he thong)\n";
+                            while (ticket) {
+                                TicketNode* tk = ticket->data;
                                 outputLog += " * Ma Ve: " + tk->getTicketID() +
                                              " | Tau: " + tk->getTrainCode() +
                                              " | Toa: " + to_string(tk->getCarriageNo()) +
                                              " | Ghe: " + to_string(tk->getSeatNo()) +
                                              " | Hanh trinh: Ga " + to_string(tk->getFromStationID()) +
                                              " -> Ga " + to_string(tk->getToStationID()) + "\n";
-                                tk = tk->getNextTicket();
+                                ticket = ticket->next;
                             }
                             break;
                         }
@@ -668,7 +677,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         case 17: {
                             trainList.resolveConflictAndScheduleSiding(&stationList);
                             FileManager::saveTrains("trains.txt", trainList);
-                            outputLog = "=== HOAN TAT QUET XUNG DOT & TAI LAP LICH DA LUOT (MULTI-PASS) ===\n\n";
+                            outputLog = "=== HOAN TAT QUET XUNG DOT & TAI LAP LICH (EVENT-DRIVEN) ===\n\n";
                             if (trainList.getLogCount() == 0) {
                                 outputLog += " -> Toan tuyen khong phat sinh xung dot moi.\n";
                             } else {
@@ -700,10 +709,9 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
         window.clear(GuiTheme::BgMain);
 
         // 1. Đếm thống kê thời gian thực cho các thẻ KPI trên cùng
-        int stCount = 0, trCount = 0, tkCount = 0;
-        for (StationNode* s = stationList.getHead(); s != nullptr; s = s->getNextStation()) stCount++;
-        for (TrainNode* t = trainList.getHead(); t != nullptr; t = t->getNextTrain()) trCount++;
-        for (TicketNode* k = ticketList.getHead(); k != nullptr; k = k->getNextTicket()) tkCount++;
+        const int stCount = stationList.getSize();
+        const int trCount = trainList.getSize();
+        const int tkCount = ticketList.getSize();
 
         auto drawKPICard = [&](float x, float y, float w, float h, const string& title, const string& val, sf::Color accent) {
             sf::RectangleShape card(sf::Vector2f(w, h));

@@ -1,39 +1,38 @@
 #include "StationList.h"
 
-StationList::StationList() : head(nullptr), tail(nullptr) {}
+StationList::StationList() : stations(), stationsByID() {}
 
 void StationList::clear() {
-    while (head != nullptr) {
-        StationNode* temp = head;
-        head = head->getNextStation();
-        delete temp;
+    LinkedList<Station*>::Node* station = stations.getHead();
+    while (station) {
+        delete station->data;
+        station = station->next;
     }
-    head = nullptr;
-    tail = nullptr;
+    stations.clear();
+    stationsByID.clear();
 }
 
 StationList::~StationList() {
     clear();
 }
 
-StationNode* StationList::getHead() const { return head; }
-StationNode* StationList::getTail() const { return tail; }
+LinkedList<Station*>::Node* StationList::getHead() const {
+    return stations.getHead();
+}
+
+LinkedList<Station*>::Node* StationList::getTail() const {
+    return stations.getTail();
+}
 
 void StationList::addStation(int id, const std::string& name, double km, int tracks) {
     StationNode* newNode = new StationNode(id, name, km, tracks);
-    if (head == nullptr) {
-        head = tail = newNode;
-        return;
+    stations.pushBack(newNode);
+    if (!stationsByID.find(id)) {
+        stationsByID.insert(id, newNode);
     }
-    tail->setNextStation(newNode);
-    tail = newNode;
 }
 
 StationNode* StationList::findStationByID(int id) const {
-    StationNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getStationID() == id) return temp;
-        temp = temp->getNextStation();
-    }
-    return nullptr;
+    StationNode* const* station = stationsByID.find(id);
+    return station ? *station : nullptr;
 }

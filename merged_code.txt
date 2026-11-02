@@ -6,25 +6,71 @@ File: .\CarriageNode.h
 #pragma once
 
 #include <string>
+#include "SegmentTree.h"
 
-class CarriageNode {
-private:
+struct Carriage {
     int carriageNo;
     std::string type;
     int totalSeats;
-    CarriageNode* nextCarriage;
+    SegmentTree<int>* seatSegments;
+    int configuredSegments;
 
 public:
-    CarriageNode(int cNo, const std::string& cType, int seats)
-        : carriageNo(cNo), type(cType), totalSeats(seats), nextCarriage(NULL) {}
+    Carriage(int cNo, const std::string& cType, int seats)
+        : carriageNo(cNo), type(cType), totalSeats(seats),
+          seatSegments(nullptr), configuredSegments(0) {}
+
+    ~Carriage() {
+        delete[] seatSegments;
+    }
+
+    Carriage(const Carriage&) = delete;
+    Carriage& operator=(const Carriage&) = delete;
 
     int getCarriageNo() const { return carriageNo; }
     std::string getType() const { return type; }
     int getTotalSeats() const { return totalSeats; }
-    CarriageNode* getNextCarriage() const { return nextCarriage; }
+    void configureSeatSegments(int segmentCount) {
+        if (segmentCount <= 0) {
+            delete[] seatSegments;
+            seatSegments = nullptr;
+            configuredSegments = 0;
+            return;
+        }
+        if (segmentCount == configuredSegments) {
+            for (int seat = 0; seat < totalSeats; ++seat) {
+                seatSegments[seat].initialize(segmentCount, 1);
+            }
+            return;
+        }
 
-    void setNextCarriage(CarriageNode* next) { nextCarriage = next; }
+        delete[] seatSegments;
+        seatSegments = nullptr;
+        configuredSegments = segmentCount;
+        if (totalSeats <= 0) {
+            return;
+        }
+        seatSegments = new SegmentTree<int>[totalSeats];
+        for (int seat = 0; seat < totalSeats; ++seat) {
+            seatSegments[seat].initialize(configuredSegments, 1);
+        }
+    }
+
+    bool isSeatAvailableOnSegments(int seatNo, int fromSegment, int toSegment) {
+        if (!seatSegments || seatNo < 1 || seatNo > totalSeats) {
+            return false;
+        }
+        return seatSegments[seatNo - 1].queryMin(fromSegment, toSegment) > 0;
+    }
+
+    void updateSeatSegments(int seatNo, int fromSegment, int toSegment, int delta) {
+        if (seatSegments && seatNo >= 1 && seatNo <= totalSeats) {
+            seatSegments[seatNo - 1].updateRange(fromSegment, toSegment, delta);
+        }
+    }
 };
+
+typedef Carriage CarriageNode;
 
 
 ========================================
@@ -72,13 +118,13 @@ void FileManager::saveStations(const string& filename, const StationList& statio
     ofstream outFile(filename);
     if (!outFile.is_open()) return;
 
-    StationNode* st = stationList.getHead();
-    while (st != nullptr) {
+    for (LinkedList<StationNode*>::Node* station = stationList.getHead();
+         station != nullptr; station = station->next) {
+        StationNode* st = station->data;
         outFile << st->getStationID() << "|"
                 << st->getName() << "|"
                 << st->getKmMarker() << "|"
                 << st->getMaxTracks() << "\n";
-        st = st->getNextStation();
     }
     outFile.close();
 }
@@ -144,26 +190,25 @@ void FileManager::saveTrains(const string& filename, const TrainList& trainList)
     ofstream outFile(filename);
     if (!outFile.is_open()) return;
 
-    TrainNode* tr = trainList.getHead();
-    while (tr != nullptr) {
+    for (LinkedList<TrainNode*>::Node* trainNode = trainList.getHead();
+         trainNode != nullptr; trainNode = trainNode->next) {
+        TrainNode* tr = trainNode->data;
         // Lưu kèm độ ưu tiên vào cột thứ 3: Mã Tàu | Hướng chạy | Độ ưu tiên
         outFile << tr->getTrainCode() << "|" 
                 << tr->getDirection() << "|" 
                 << tr->getPriority() << "\n";
 
-        CarriageNode* c = tr->getHeadCarriage();
-        while (c != nullptr) {
+        for (LinkedList<CarriageNode*>::Node* carriage = tr->getHeadCarriage();
+             carriage != nullptr; carriage = carriage->next) {
+            CarriageNode* c = carriage->data;
             outFile << "CARRIAGE|" << c->getCarriageNo() << "|" << c->getType() << "|" << c->getTotalSeats() << "\n";
-            c = c->getNextCarriage();
         }
 
-        StopScheduleNode* s = tr->getHeadSchedule();
-        while (s != nullptr) {
+        for (LinkedList<StopScheduleNode*>::Node* stop = tr->getHeadSchedule();
+             stop != nullptr; stop = stop->next) {
+            StopScheduleNode* s = stop->data;
             outFile << "STOP|" << s->getStationID() << "|" << s->getArrivalMinute() << "|" << s->getDepartureMinute() << "|" << s->getTrackUsed() << "\n";
-            s = s->getNextStop();
         }
-
-        tr = tr->getNextTrain();
     }
     outFile.close();
 }
@@ -193,15 +238,15 @@ void FileManager::saveTickets(const string& filename, const TicketList& ticketLi
     ofstream outFile(filename);
     if (!outFile.is_open()) return;
 
-    TicketNode* tk = ticketList.getHead();
-    while (tk != nullptr) {
+    for (LinkedList<TicketNode*>::Node* ticket = ticketList.getHead();
+         ticket != nullptr; ticket = ticket->next) {
+        TicketNode* tk = ticket->data;
         outFile << tk->getTicketID() << "|"
                 << tk->getTrainCode() << "|"
                 << tk->getCarriageNo() << "|"
                 << tk->getSeatNo() << "|"
                 << tk->getFromStationID() << "|"
                 << tk->getToStationID() << "\n";
-        tk = tk->getNextTicket();
     }
     outFile.close();
 }
@@ -344,17 +389,12 @@ static void drawThickLine(sf::RenderWindow& window, sf::Vector2f p1, sf::Vector2
 // ==================== 3. HÀM TÍNH TỌA ĐỘ KM MƯỢT THEO THỜI GIAN THỰC ====================
 static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList, float currentMinute, int& trackUsedOut) {
     trackUsedOut = 0;
-    StopScheduleNode* firstStop = train->getHeadSchedule();
+    LinkedList<StopScheduleNode*>::Node* firstStopNode = train->getHeadSchedule();
+    StopScheduleNode* firstStop = firstStopNode ? firstStopNode->data : nullptr;
     if (!firstStop) return -1.0;
 
-    // Truy xuất trực tiếp ga cuối trong O(1) qua con trỏ tailSchedule
-    StopScheduleNode* lastStop = train->getTailSchedule();
-    if (!lastStop) {
-        lastStop = firstStop;
-        while (lastStop->getNextStop() != nullptr) {
-            lastStop = lastStop->getNextStop();
-        }
-    }
+    LinkedList<StopScheduleNode*>::Node* lastStopNode = train->getTailSchedule();
+    StopScheduleNode* lastStop = lastStopNode ? lastStopNode->data : nullptr;
 
     // 1. Chưa tới giờ xuất phát -> Tàu chờ sẵn tại Ga Đầu
     if (currentMinute < static_cast<float>(firstStop->getArrivalMinute())) {
@@ -375,7 +415,9 @@ static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList,
     }
 
     // 3. Kiểm tra tàu đang đỗ tại ga hoặc đang di chuyển giữa 2 ga (Khu gian)
-    for (StopScheduleNode* curr = firstStop; curr != nullptr; curr = curr->getNextStop()) {
+    for (LinkedList<StopScheduleNode*>::Node* stopNode = firstStopNode;
+         stopNode != nullptr; stopNode = stopNode->next) {
+        StopScheduleNode* curr = stopNode->data;
         float arr = static_cast<float>(curr->getArrivalMinute());
         float dep = static_cast<float>(curr->getDepartureMinute());
 
@@ -387,7 +429,8 @@ static double calculateTrainKmSmooth(TrainNode* train, StationList* stationList,
             }
         }
 
-        StopScheduleNode* nextStop = curr->getNextStop();
+        StopScheduleNode* nextStop =
+            stopNode->next ? stopNode->next->data : nullptr;
         if (nextStop != nullptr) {
             float nextArr = static_cast<float>(nextStop->getArrivalMinute());
             if (currentMinute > dep && currentMinute < nextArr) {
@@ -423,7 +466,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
     // Tìm mốc Km lớn nhất trên tuyến để chuẩn hóa tỷ lệ vẽ
     double maxKm = 100.0;
-    for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+    for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+         station != nullptr; station = station->next) {
+        StationNode* st = station->data;
         if (st->getKmMarker() > maxKm) maxKm = st->getKmMarker();
     }
     if (maxKm <= 0.0) maxKm = 100.0;
@@ -465,9 +510,12 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
     // Tự động lấy mốc thời gian bắt đầu sớm nhất của các đoàn tàu (trừ hao 15 phút chuẩn bị)
     int earliestMinute = 1440;
-    for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+    for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+         trainNode != nullptr; trainNode = trainNode->next) {
+        TrainNode* tr = trainNode->data;
         if (tr->getHeadSchedule()) {
-            earliestMinute = std::min(earliestMinute, tr->getHeadSchedule()->getArrivalMinute());
+            earliestMinute = std::min(earliestMinute,
+                tr->getHeadSchedule()->data->getArrivalMinute());
         }
     }
     float startMinute = (earliestMinute < 1440) ? static_cast<float>(std::max(0, earliestMinute - 15)) : 0.0f;
@@ -521,14 +569,21 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         }
 
         // ==================== B. VẼ NHÀ GA, ĐƯỜNG RAY PHỤ & ĐÈN TÍN HIỆU ====================
-        for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+        for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+             station != nullptr; station = station->next) {
+            StationNode* st = station->data;
             float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
             int maxTracks = st->getMaxTracks();
 
             // Kiểm tra có đoàn tàu nào đang dừng đỗ tại ga này không để bật đèn tín hiệu Đỏ
             bool stationOccupied = false;
-            for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
-                for (StopScheduleNode* sc = tr->getHeadSchedule(); sc != nullptr; sc = sc->getNextStop()) {
+            for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+                 trainNode != nullptr; trainNode = trainNode->next) {
+                TrainNode* tr = trainNode->data;
+                for (LinkedList<StopScheduleNode*>::Node* stopNode =
+                         tr->getHeadSchedule(); stopNode != nullptr;
+                     stopNode = stopNode->next) {
+                    StopScheduleNode* sc = stopNode->data;
                     if (sc->getStationID() == st->getStationID()) {
                         if (currentMinute >= static_cast<float>(sc->getArrivalMinute()) &&
                             currentMinute <= static_cast<float>(sc->getDepartureMinute())) {
@@ -623,7 +678,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         // ==================== C. VẼ ĐƯỜNG RAY CHÍNH & CÁC TÂM GA ====================
         window.draw(mainTrackVA);
 
-        for (StationNode* st = stationList->getHead(); st != nullptr; st = st->getNextStation()) {
+        for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+             station != nullptr; station = station->next) {
+            StationNode* st = station->data;
             float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
 
             sf::CircleShape outerNode(9.0f);
@@ -642,7 +699,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         }
 
         // ==================== D. VẼ CÁC ĐOÀN TÀU BO GÓC, ĐỔ BÓNG & NỘI SUY LERP ====================
-        for (TrainNode* train = trainList->getHead(); train != nullptr; train = train->getNextTrain()) {
+        for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+             trainNode != nullptr; trainNode = trainNode->next) {
+            TrainNode* train = trainNode->data;
             int trackUsed = 0;
             double currentKm = calculateTrainKmSmooth(train, stationList, currentMinute, trackUsed);
 
@@ -803,7 +862,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         window.draw(teleTitle);
 
         float ty = WINDOW_HEIGHT - teleH + 18.0f;
-        for (TrainNode* tr = trainList->getHead(); tr != nullptr; tr = tr->getNextTrain()) {
+        for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+             trainNode != nullptr; trainNode = trainNode->next) {
+            TrainNode* tr = trainNode->data;
             int trk = 0;
             double km = calculateTrainKmSmooth(tr, stationList, currentMinute, trk);
             string statusStr = (trk == 0) ? "Chay khu gian" : (trk == 1 ? "Do Ray Chinh (R1)" : "Tranh Ray Phu (R" + to_string(trk) + ")");
@@ -999,7 +1060,7 @@ void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, Tick
         return;
     }
 
-    // Gọi hàm checkCarriageSeats (O(M)) trả về bool để chặn ngay nếu sai hướng hoặc không qua ga
+    // Kiểm tra sơ đồ ghế bằng truy vấn cây phân đoạn theo từng ghế.
     bool seatFree[129];
     if (!ticketList.checkCarriageSeats(&stationList, &trainList, trainCode, carriageNo, fromSt, toSt, seatFree, totalSeats)) {
         outputLog = "-> [LOI HANH TRINH] Tau " + trainCode + " KHONG phuc vu chang Ga " + to_string(fromSt) +
@@ -1151,9 +1212,9 @@ void GuiMenu::applyDelayUI(StationList& stationList, TrainList& trainList, sf::F
             int delayMins = stoi(strDelay);
             if (trainList.applyDelayAndReschedule(trainCode, stID, delayMins, &stationList)) {
                 FileManager::saveTrains("trains.txt", trainList);
-                outputLog = "=== KET QUA LAN TRUYEN TRE & TAI LAP LICH (MULTI-PASS) ===\n\n";
+                outputLog = "=== KET QUA LAN TRUYEN TRE & TAI LAP LICH (EVENT-DRIVEN) ===\n\n";
                 outputLog += " -> Da cong them " + to_string(delayMins) + " phut cho tau " + trainCode + " tu Ga ID " + to_string(stID) + ".\n";
-                outputLog += " -> Da kich hoat thuat toan Multi-pass quet toan tuyen (xet Priority & maxTracks).\n\n";
+                outputLog += " -> Da kich hoat bo lap lich theo su kien (xet Priority & maxTracks).\n\n";
                 outputLog += "Cac xung dot vua duoc giai quyet:\n";
                 for (int i = 0; i < trainList.getLogCount(); ++i) {
                     outputLog += "   + " + trainList.getLog(i) + "\n";
@@ -1223,7 +1284,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
         "====================================================================\n"
         " * Thuat toan Uu tien Tau (Train Priority): SE (P1) > TN (P2) > Tau hang (P3).\n"
         " * Kiem soat Nang luc Ha tang (maxTracks): Tu dong giu tau o ga truoc neu ga xep chi co 1 ray.\n"
-        " * Giai toa Hieu ung Domino (Multi-pass Loop): Quet lap den khi toan tuyen sach xung dot.\n\n"
+        " * Giai toa xung dot theo dong su kien thoi gian, tu dong phan luong ray.\n\n"
         "-> Hay chon mot chuc nang o bang dieu khien ben trai. Dung con lan chuot de cuon noi dung dai.";
 
     float scrollOffsetY = 0.0f;
@@ -1296,14 +1357,15 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         switch (subBtn.actionID) {
                         case 1: {
                             outputLog = "=== DANH SACH NHA GA & NANG LUC HA TANG (MAX TRACKS) ===\n\n";
-                            StationNode* st = stationList.getHead();
-                            while (st) {
+                            for (LinkedList<StationNode*>::Node* station =
+                                     stationList.getHead();
+                                 station; station = station->next) {
+                                StationNode* st = station->data;
                                 string infraType = (st->getMaxTracks() == 1) ? " [Ga xep 1 ray - Khong the tranh tau]" : " [Ga co ray phu tranh tau]";
                                 outputLog += " * Ga ID: " + to_string(st->getStationID()) +
                                              " | Ten: " + st->getName() +
                                              " | Ly trinh: " + to_string(static_cast<int>(st->getKmMarker())) + " km" +
                                              " | So ray (maxTracks): " + to_string(st->getMaxTracks()) + infraType + "\n";
-                                st = st->getNextStation();
                             }
                             break;
                         }
@@ -1341,32 +1403,39 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         }
                         case 4: {
                             outputLog = "=== DANH SACH DOAN TAU & CAP DO UU TIEN (TRAIN PRIORITY) ===\n\n";
-                            TrainNode* tr = trainList.getHead();
-                            while (tr) {
+                            for (LinkedList<TrainNode*>::Node* train =
+                                     trainList.getHead();
+                                 train; train = train->next) {
+                                TrainNode* tr = train->data;
                                 string prioDesc = (tr->getPriority() == 1) ? "Uu tien 1 (Tau khach nhanh SE)" :
                                                   (tr->getPriority() == 2 ? "Uu tien 2 (Tau khach thuong TN)" : "Uu tien 3 (Tau hang)");
                                 outputLog += " * Ma Tau: " + tr->getTrainCode() +
                                              "  |  Cap do: " + prioDesc +
                                              "  |  Huong chay: " + (tr->getDirection() == 1 ? "Bac -> Nam (1)" : "Nam -> Bac (0)") + "\n";
-                                tr = tr->getNextTrain();
                             }
                             break;
                         }
                         case 5: {
                             outputLog = "=== BANG CHI TIET TOA XE & LICH TRINH DUNG DO (CUON CHUOT DE XEM TIEP) ===\n\n";
-                            TrainNode* tr = trainList.getHead();
-                            while (tr) {
+                            for (LinkedList<TrainNode*>::Node* train =
+                                     trainList.getHead();
+                                 train; train = train->next) {
+                                TrainNode* tr = train->data;
                                 outputLog += " [TAU " + tr->getTrainCode() + " - PRIORITY P" + to_string(tr->getPriority()) +
                                              " | Huong: " + (tr->getDirection() == 1 ? "Nam" : "Bac") + "]\n   * Danh sach Toa: ";
-                                CarriageNode* c = tr->getHeadCarriage();
-                                if (!c) outputLog += "(Chua co toa xe)";
-                                while (c) {
+                                LinkedList<CarriageNode*>::Node* carriage =
+                                    tr->getHeadCarriage();
+                                if (!carriage) outputLog += "(Chua co toa xe)";
+                                while (carriage) {
+                                    CarriageNode* c = carriage->data;
                                     outputLog += "[Toa " + to_string(c->getCarriageNo()) + ": " + c->getType() + " (" + to_string(c->getTotalSeats()) + " ghe)]  ";
-                                    c = c->getNextCarriage();
+                                    carriage = carriage->next;
                                 }
                                 outputLog += "\n   * Lich trinh cac ga:\n";
-                                StopScheduleNode* s = tr->getHeadSchedule();
-                                while (s) {
+                                LinkedList<StopScheduleNode*>::Node* stop =
+                                    tr->getHeadSchedule();
+                                while (stop) {
+                                    StopScheduleNode* s = stop->data;
                                     StationNode* stNode = stationList.findStationByID(s->getStationID());
                                     string stName = stNode ? stNode->getName() : ("Ga " + to_string(s->getStationID()));
                                     char buf[140];
@@ -1377,10 +1446,9 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                                              s->getTrackUsed(),
                                              (s->getTrackUsed() > 1 ? "(Ray phu tranh tau)" : "(Ray chinh)"));
                                     outputLog += string(buf);
-                                    s = s->getNextStop();
+                                    stop = stop->next;
                                 }
                                 outputLog += "--------------------------------------------------------------------------------\n";
-                                tr = tr->getNextTrain();
                             }
                             break;
                         }
@@ -1442,16 +1510,18 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         }
                         case 7: {
                             outputLog = "=== DANH SACH VE DA PHAT HANH TRONG HE THONG ===\n\n";
-                            TicketNode* tk = ticketList.getHead();
-                            if (!tk) outputLog += " (Chua co ve nao duoc dat trong he thong)\n";
-                            while (tk) {
+                            LinkedList<TicketNode*>::Node* ticket =
+                                ticketList.getHead();
+                            if (!ticket) outputLog += " (Chua co ve nao duoc dat trong he thong)\n";
+                            while (ticket) {
+                                TicketNode* tk = ticket->data;
                                 outputLog += " * Ma Ve: " + tk->getTicketID() +
                                              " | Tau: " + tk->getTrainCode() +
                                              " | Toa: " + to_string(tk->getCarriageNo()) +
                                              " | Ghe: " + to_string(tk->getSeatNo()) +
                                              " | Hanh trinh: Ga " + to_string(tk->getFromStationID()) +
                                              " -> Ga " + to_string(tk->getToStationID()) + "\n";
-                                tk = tk->getNextTicket();
+                                ticket = ticket->next;
                             }
                             break;
                         }
@@ -1522,7 +1592,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                         case 17: {
                             trainList.resolveConflictAndScheduleSiding(&stationList);
                             FileManager::saveTrains("trains.txt", trainList);
-                            outputLog = "=== HOAN TAT QUET XUNG DOT & TAI LAP LICH DA LUOT (MULTI-PASS) ===\n\n";
+                            outputLog = "=== HOAN TAT QUET XUNG DOT & TAI LAP LICH (EVENT-DRIVEN) ===\n\n";
                             if (trainList.getLogCount() == 0) {
                                 outputLog += " -> Toan tuyen khong phat sinh xung dot moi.\n";
                             } else {
@@ -1554,10 +1624,9 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
         window.clear(GuiTheme::BgMain);
 
         // 1. Đếm thống kê thời gian thực cho các thẻ KPI trên cùng
-        int stCount = 0, trCount = 0, tkCount = 0;
-        for (StationNode* s = stationList.getHead(); s != nullptr; s = s->getNextStation()) stCount++;
-        for (TrainNode* t = trainList.getHead(); t != nullptr; t = t->getNextTrain()) trCount++;
-        for (TicketNode* k = ticketList.getHead(); k != nullptr; k = k->getNextTicket()) tkCount++;
+        const int stCount = stationList.getSize();
+        const int trCount = trainList.getSize();
+        const int tkCount = ticketList.getSize();
 
         auto drawKPICard = [&](float x, float y, float w, float h, const string& title, const string& val, sf::Color accent) {
             sf::RectangleShape card(sf::Vector2f(w, h));
@@ -1820,6 +1889,279 @@ public:
 };
 
 ========================================
+File: .\HashMap.h
+========================================
+
+#pragma once
+
+#include <string>
+
+struct IntHash {
+    unsigned long operator()(int key) const {
+        return static_cast<unsigned long>(static_cast<unsigned int>(key));
+    }
+};
+
+struct StringHash {
+    unsigned long operator()(const std::string& key) const {
+        unsigned long hash = 2166136261UL;
+        for (std::string::size_type i = 0; i < key.size(); ++i) {
+            hash ^= static_cast<unsigned char>(key[i]);
+            hash *= 16777619UL;
+        }
+        return hash;
+    }
+};
+
+template <typename K, typename V, typename HashFunc>
+class HashMap {
+private:
+    struct Entry {
+        K key;
+        V value;
+        Entry* next;
+
+        Entry(const K& entryKey, const V& entryValue)
+            : key(entryKey), value(entryValue), next(nullptr) {}
+    };
+
+    Entry** buckets;
+    int capacity;
+    int size;
+    HashFunc hash;
+
+    int bucketFor(const K& key, int bucketCount) const {
+        return static_cast<int>(hash(key) % static_cast<unsigned long>(bucketCount));
+    }
+
+    void rehash(int newCapacity) {
+        Entry** newBuckets = new Entry*[newCapacity];
+        for (int i = 0; i < newCapacity; ++i) {
+            newBuckets[i] = nullptr;
+        }
+
+        for (int i = 0; i < capacity; ++i) {
+            Entry* entry = buckets[i];
+            while (entry) {
+                Entry* next = entry->next;
+                const int index = bucketFor(entry->key, newCapacity);
+                entry->next = newBuckets[index];
+                newBuckets[index] = entry;
+                entry = next;
+            }
+        }
+
+        delete[] buckets;
+        buckets = newBuckets;
+        capacity = newCapacity;
+    }
+
+public:
+    explicit HashMap(int initialCapacity = 16, const HashFunc& hashFunc = HashFunc())
+        : buckets(nullptr), capacity(initialCapacity < 4 ? 4 : initialCapacity),
+          size(0), hash(hashFunc) {
+        buckets = new Entry*[capacity];
+        for (int i = 0; i < capacity; ++i) {
+            buckets[i] = nullptr;
+        }
+    }
+
+    ~HashMap() {
+        clear();
+        delete[] buckets;
+    }
+
+    HashMap(const HashMap&) = delete;
+    HashMap& operator=(const HashMap&) = delete;
+
+    void clear() {
+        for (int i = 0; i < capacity; ++i) {
+            Entry* entry = buckets[i];
+            while (entry) {
+                Entry* next = entry->next;
+                delete entry;
+                entry = next;
+            }
+            buckets[i] = nullptr;
+        }
+        size = 0;
+    }
+
+    bool insert(const K& key, const V& value) {
+        Entry* existing = findEntry(key);
+        if (existing) {
+            existing->value = value;
+            return false;
+        }
+
+        if ((size + 1) * 4 > capacity * 3) {
+            rehash(capacity * 2);
+        }
+
+        const int index = bucketFor(key, capacity);
+        Entry* entry = new Entry(key, value);
+        entry->next = buckets[index];
+        buckets[index] = entry;
+        ++size;
+        return true;
+    }
+
+    V* find(const K& key) {
+        Entry* entry = findEntry(key);
+        return entry ? &entry->value : nullptr;
+    }
+
+    const V* find(const K& key) const {
+        const Entry* entry = findEntry(key);
+        return entry ? &entry->value : nullptr;
+    }
+
+    bool remove(const K& key) {
+        const int index = bucketFor(key, capacity);
+        Entry* previous = nullptr;
+        Entry* entry = buckets[index];
+        while (entry) {
+            if (entry->key == key) {
+                if (previous) {
+                    previous->next = entry->next;
+                } else {
+                    buckets[index] = entry->next;
+                }
+                delete entry;
+                --size;
+                return true;
+            }
+            previous = entry;
+            entry = entry->next;
+        }
+        return false;
+    }
+
+    int getSize() const {
+        return size;
+    }
+
+private:
+    Entry* findEntry(const K& key) {
+        Entry* entry = buckets[bucketFor(key, capacity)];
+        while (entry) {
+            if (entry->key == key) {
+                return entry;
+            }
+            entry = entry->next;
+        }
+        return nullptr;
+    }
+
+    const Entry* findEntry(const K& key) const {
+        const Entry* entry = buckets[bucketFor(key, capacity)];
+        while (entry) {
+            if (entry->key == key) {
+                return entry;
+            }
+            entry = entry->next;
+        }
+        return nullptr;
+    }
+};
+
+
+========================================
+File: .\LinkedList.h
+========================================
+
+#pragma once
+
+template <typename T>
+struct Node {
+    T data;
+    Node<T>* next;
+
+    explicit Node(const T& value) : data(value), next(nullptr) {}
+};
+
+template <typename T>
+class LinkedList {
+public:
+    typedef ::Node<T> Node;
+
+private:
+    Node* head;
+    Node* tail;
+    int size;
+
+public:
+    LinkedList() : head(nullptr), tail(nullptr), size(0) {}
+
+    ~LinkedList() {
+        clear();
+    }
+
+    LinkedList(const LinkedList&) = delete;
+    LinkedList& operator=(const LinkedList&) = delete;
+
+    void pushBack(const T& value) {
+        Node* node = new Node(value);
+        if (!tail) {
+            head = tail = node;
+        } else {
+            tail->next = node;
+            tail = node;
+        }
+        ++size;
+    }
+
+    void clear() {
+        while (head) {
+            Node* node = head;
+            head = head->next;
+            delete node;
+        }
+        tail = nullptr;
+        size = 0;
+    }
+
+    int getSize() const {
+        return size;
+    }
+
+    Node* getHead() const {
+        return head;
+    }
+
+    Node* getTail() const {
+        return tail;
+    }
+
+    bool removeNode(Node* target) {
+        if (!target) {
+            return false;
+        }
+        Node* previous = nullptr;
+        Node* current = head;
+        while (current && current != target) {
+            previous = current;
+            current = current->next;
+        }
+        if (!current) {
+            return false;
+        }
+        if (previous) {
+            previous->next = current->next;
+        } else {
+            head = current->next;
+        }
+        if (tail == current) {
+            tail = previous;
+        }
+        delete current;
+        --size;
+        return true;
+    }
+};
+
+
+========================================
 File: .\main.cpp
 ========================================
 
@@ -1866,47 +2208,303 @@ int main() {
 
 
 ========================================
+File: .\MinHeap.h
+========================================
+
+#pragma once
+
+#include <stdexcept>
+
+template <typename T>
+struct MinHeapLess {
+    bool operator()(const T& left, const T& right) const {
+        return left < right;
+    }
+};
+
+template <typename T, typename Comparator = MinHeapLess<T>>
+class MinHeap {
+private:
+    T* items;
+    int itemCount;
+    int capacity;
+    Comparator comesBefore;
+
+    void grow() {
+        const int newCapacity = capacity == 0 ? 8 : capacity * 2;
+        T* expanded = new T[newCapacity];
+        for (int i = 0; i < itemCount; ++i) {
+            expanded[i] = items[i];
+        }
+        delete[] items;
+        items = expanded;
+        capacity = newCapacity;
+    }
+
+public:
+    explicit MinHeap(const Comparator& comparator = Comparator())
+        : items(nullptr), itemCount(0), capacity(0), comesBefore(comparator) {}
+
+    ~MinHeap() {
+        clear();
+    }
+
+    MinHeap(const MinHeap&) = delete;
+    MinHeap& operator=(const MinHeap&) = delete;
+
+    void clear() {
+        delete[] items;
+        items = nullptr;
+        itemCount = 0;
+        capacity = 0;
+    }
+
+    bool isEmpty() const {
+        return itemCount == 0;
+    }
+
+    int size() const {
+        return itemCount;
+    }
+
+    const T& top() const {
+        if (isEmpty()) {
+            throw std::out_of_range("MinHeap::top called on an empty heap");
+        }
+        return items[0];
+    }
+
+    void push(const T& value) {
+        if (itemCount == capacity) {
+            grow();
+        }
+
+        int index = itemCount++;
+        items[index] = value;
+        while (index > 0) {
+            const int parent = (index - 1) / 2;
+            if (!comesBefore(items[index], items[parent])) {
+                break;
+            }
+            T temp = items[index];
+            items[index] = items[parent];
+            items[parent] = temp;
+            index = parent;
+        }
+    }
+
+    void pop() {
+        if (isEmpty()) {
+            return;
+        }
+
+        --itemCount;
+        if (itemCount == 0) {
+            return;
+        }
+
+        items[0] = items[itemCount];
+        int index = 0;
+        while (true) {
+            const int left = index * 2 + 1;
+            const int right = left + 1;
+            int best = index;
+
+            if (left < itemCount && comesBefore(items[left], items[best])) {
+                best = left;
+            }
+            if (right < itemCount && comesBefore(items[right], items[best])) {
+                best = right;
+            }
+            if (best == index) {
+                break;
+            }
+
+            T temp = items[index];
+            items[index] = items[best];
+            items[best] = temp;
+            index = best;
+        }
+    }
+};
+
+
+========================================
+File: .\SegmentTree.h
+========================================
+
+#pragma once
+
+template <typename T>
+class SegmentTree {
+private:
+    T* minimums;
+    T* lazyValues;
+    int segmentCount;
+
+    void build(int node, int left, int right, const T& initialValue) {
+        minimums[node] = initialValue;
+        lazyValues[node] = T();
+        if (left == right) {
+            return;
+        }
+        const int middle = left + (right - left) / 2;
+        build(node * 2, left, middle, initialValue);
+        build(node * 2 + 1, middle + 1, right, initialValue);
+    }
+
+    void apply(int node, const T& value) {
+        minimums[node] += value;
+        lazyValues[node] += value;
+    }
+
+    void pushDown(int node) {
+        if (lazyValues[node] == T()) {
+            return;
+        }
+        apply(node * 2, lazyValues[node]);
+        apply(node * 2 + 1, lazyValues[node]);
+        lazyValues[node] = T();
+    }
+
+    void update(int node, int left, int right, int queryLeft, int queryRight,
+                const T& value) {
+        if (queryLeft <= left && right <= queryRight) {
+            apply(node, value);
+            return;
+        }
+
+        pushDown(node);
+        const int middle = left + (right - left) / 2;
+        if (queryLeft <= middle) {
+            update(node * 2, left, middle, queryLeft, queryRight, value);
+        }
+        if (queryRight > middle) {
+            update(node * 2 + 1, middle + 1, right, queryLeft, queryRight, value);
+        }
+        minimums[node] = minimums[node * 2] < minimums[node * 2 + 1]
+            ? minimums[node * 2] : minimums[node * 2 + 1];
+    }
+
+    T query(int node, int left, int right, int queryLeft, int queryRight) {
+        if (queryLeft <= left && right <= queryRight) {
+            return minimums[node];
+        }
+
+        pushDown(node);
+        const int middle = left + (right - left) / 2;
+        bool hasResult = false;
+        T result = T();
+
+        if (queryLeft <= middle) {
+            result = query(node * 2, left, middle, queryLeft, queryRight);
+            hasResult = true;
+        }
+        if (queryRight > middle) {
+            const T rightResult = query(node * 2 + 1, middle + 1, right,
+                                        queryLeft, queryRight);
+            if (!hasResult || rightResult < result) {
+                result = rightResult;
+            }
+        }
+        return result;
+    }
+
+public:
+    SegmentTree() : minimums(nullptr), lazyValues(nullptr), segmentCount(0) {}
+
+    explicit SegmentTree(int count, const T& initialValue = T())
+        : minimums(nullptr), lazyValues(nullptr), segmentCount(0) {
+        initialize(count, initialValue);
+    }
+
+    ~SegmentTree() {
+        clear();
+    }
+
+    SegmentTree(const SegmentTree&) = delete;
+    SegmentTree& operator=(const SegmentTree&) = delete;
+
+    void clear() {
+        delete[] minimums;
+        delete[] lazyValues;
+        minimums = nullptr;
+        lazyValues = nullptr;
+        segmentCount = 0;
+    }
+
+    void initialize(int count, const T& initialValue = T()) {
+        clear();
+        if (count <= 0) {
+            return;
+        }
+        segmentCount = count;
+        minimums = new T[4 * count];
+        lazyValues = new T[4 * count];
+        build(1, 0, count - 1, initialValue);
+    }
+
+    int size() const {
+        return segmentCount;
+    }
+
+    T queryMin(int left, int right) {
+        if (segmentCount == 0 || left < 0 || right >= segmentCount || left > right) {
+            return T();
+        }
+        return query(1, 0, segmentCount - 1, left, right);
+    }
+
+    void updateRange(int left, int right, const T& value) {
+        if (segmentCount == 0 || left < 0 || right >= segmentCount || left > right) {
+            return;
+        }
+        update(1, 0, segmentCount - 1, left, right, value);
+    }
+};
+
+
+========================================
 File: .\StationList.cpp
 ========================================
 
 #include "StationList.h"
 
-StationList::StationList() : head(nullptr), tail(nullptr) {}
+StationList::StationList() : stations(), stationsByID() {}
 
 void StationList::clear() {
-    while (head != nullptr) {
-        StationNode* temp = head;
-        head = head->getNextStation();
-        delete temp;
+    LinkedList<Station*>::Node* station = stations.getHead();
+    while (station) {
+        delete station->data;
+        station = station->next;
     }
-    head = nullptr;
-    tail = nullptr;
+    stations.clear();
+    stationsByID.clear();
 }
 
 StationList::~StationList() {
     clear();
 }
 
-StationNode* StationList::getHead() const { return head; }
-StationNode* StationList::getTail() const { return tail; }
+LinkedList<Station*>::Node* StationList::getHead() const {
+    return stations.getHead();
+}
+
+LinkedList<Station*>::Node* StationList::getTail() const {
+    return stations.getTail();
+}
 
 void StationList::addStation(int id, const std::string& name, double km, int tracks) {
     StationNode* newNode = new StationNode(id, name, km, tracks);
-    if (head == nullptr) {
-        head = tail = newNode;
-        return;
+    stations.pushBack(newNode);
+    if (!stationsByID.find(id)) {
+        stationsByID.insert(id, newNode);
     }
-    tail->setNextStation(newNode);
-    tail = newNode;
 }
 
 StationNode* StationList::findStationByID(int id) const {
-    StationNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getStationID() == id) return temp;
-        temp = temp->getNextStation();
-    }
-    return nullptr;
+    StationNode* const* station = stationsByID.find(id);
+    return station ? *station : nullptr;
 }
 
 ========================================
@@ -1917,18 +2515,21 @@ File: .\StationList.h
 #include <iostream>
 #include <string>
 #include "StationNode.h"
+#include "LinkedList.h"
+#include "HashMap.h"
 
 class StationList {
 private:
-    StationNode* head;
-    StationNode* tail; // Con trỏ cuối giúp chèn O(1)
+    LinkedList<Station*> stations;
+    HashMap<int, Station*, IntHash> stationsByID;
 
 public:
     StationList();
     ~StationList();
 
-    StationNode* getHead() const;
-    StationNode* getTail() const;
+    LinkedList<Station*>::Node* getHead() const;
+    LinkedList<Station*>::Node* getTail() const;
+    int getSize() const { return stations.getSize(); }
     void addStation(int id, const std::string& name, double km, int tracks);
     StationNode* findStationByID(int id) const;
     void clear();
@@ -1941,18 +2542,15 @@ File: .\StationNode.h
 #pragma once
 #include <string>
 
-class StationNode {
-private:
+struct Station {
     int stationID;
     std::string name;
     double kmMarker;
     int maxTracks; // Năng lực hạ tầng: Tổng số đường ray tại ga (1 = ga xép chỉ có ray chính)
-    StationNode* nextStation;
-
 public:
-    StationNode(int id, const std::string& stName, double km, int tracks)
+    Station(int id, const std::string& stName, double km, int tracks)
         : stationID(id), name(stName), kmMarker(km), 
-          maxTracks(tracks < 1 ? 1 : tracks), nextStation(nullptr) {}
+          maxTracks(tracks < 1 ? 1 : tracks) {}
 
     int getStationID() const { return stationID; }
     std::string getName() const { return name; }
@@ -1962,9 +2560,9 @@ public:
     int getNumberOfTracks() const { return maxTracks; } // Giữ tương thích với FileManager & GuiMenu
     void setMaxTracks(int tracks) { maxTracks = (tracks < 1) ? 1 : tracks; }
 
-    StationNode* getNextStation() const { return nextStation; }
-    void setNextStation(StationNode* next) { nextStation = next; }
 };
+
+typedef Station StationNode;
 
 ========================================
 File: .\StopScheduleNode.h
@@ -1972,29 +2570,25 @@ File: .\StopScheduleNode.h
 
 #pragma once
 
-class StopScheduleNode {
-private:
+struct StopSchedule {
     int stationID;
     int arrivalMinute;  
     int departureMinute; 
     int trackUsed;     
-    StopScheduleNode* nextStop;
-
 public:
-    StopScheduleNode(int stID, int arr, int dep, int track)
-        : stationID(stID), arrivalMinute(arr), departureMinute(dep), trackUsed(track), nextStop(NULL) {}
+    StopSchedule(int stID, int arr, int dep, int track)
+        : stationID(stID), arrivalMinute(arr), departureMinute(dep), trackUsed(track) {}
 
     int getStationID() const { return stationID; }
     int getArrivalMinute() const { return arrivalMinute; }
     int getDepartureMinute() const { return departureMinute; }
     int getTrackUsed() const { return trackUsed; }
-    StopScheduleNode* getNextStop() const { return nextStop; }
-
     void setArrivalMinute(int arr) { arrivalMinute = arr; }
     void setDepartureMinute(int dep) { departureMinute = dep; }
     void setTrackUsed(int track) { trackUsed = track; }
-    void setNextStop(StopScheduleNode* next) { nextStop = next; }
 };
+
+typedef StopSchedule StopScheduleNode;
 
 ========================================
 File: .\TicketList.cpp
@@ -2006,76 +2600,163 @@ File: .\TicketList.cpp
 #include "StationNode.h"
 #include "TrainNode.h"
 #include "StopScheduleNode.h"
+#include "CarriageNode.h"
 #include <iostream>
-#include <algorithm>
 
 using namespace std;
 
-TicketList::TicketList() : head(nullptr), tail(nullptr) {}
+namespace {
+int findScheduleIndex(TrainNode* train, int stationID) {
+    int index = 0;
+    for (LinkedList<StopScheduleNode*>::Node* stopNode =
+             train ? train->getHeadSchedule() : nullptr;
+         stopNode != nullptr; stopNode = stopNode->next, ++index) {
+        StopScheduleNode* stop = stopNode->data;
+        if (stop->getStationID() == stationID) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+int countScheduleStops(TrainNode* train) {
+    int count = 0;
+    for (LinkedList<StopScheduleNode*>::Node* stop =
+             train ? train->getHeadSchedule() : nullptr;
+         stop != nullptr; stop = stop->next) {
+        ++count;
+    }
+    return count;
+}
+}
+
+TicketList::TicketList()
+    : tickets(), ticketsByID(), occupancyRevision(0),
+      builtOccupancyRevision(~0UL), builtTrainRevision(~0UL),
+      occupancyTrainList(nullptr) {}
 
 TicketList::~TicketList() {
     clear();
 }
 
 void TicketList::clear() {
-    while (head != nullptr) {
-        TicketNode* temp = head;
-        head = head->getNextTicket();
-        delete temp;
+    LinkedList<TicketNode*>::Node* ticket = tickets.getHead();
+    while (ticket) {
+        delete ticket->data;
+        ticket = ticket->next;
     }
-    head = nullptr;
-    tail = nullptr;
+    tickets.clear();
+    ticketsByID.clear();
+    ++occupancyRevision;
 }
 
 // Chèn vé mới vào cuối danh sách liên kết với độ phức tạp O(1)
 void TicketList::addTicket(const string& ticketID, const string& trainCode, 
                            int carriageNo, int seatNo, int fromID, int toID) {
     TicketNode* newNode = new TicketNode(ticketID, trainCode, carriageNo, seatNo, fromID, toID);
-    if (!head) {
-        head = tail = newNode;
-        return;
+    const bool cacheWasCurrent =
+        builtOccupancyRevision == occupancyRevision && occupancyTrainList &&
+        builtTrainRevision == occupancyTrainList->getStructureRevision();
+    tickets.pushBack(newNode);
+    if (!ticketsByID.find(ticketID)) {
+        ticketsByID.insert(ticketID, newNode);
     }
-    tail->setNextTicket(newNode);
-    tail = newNode;
+    ++occupancyRevision;
+    if (cacheWasCurrent) {
+        updateSeatOccupancyForTicket(newNode, -1);
+        builtOccupancyRevision = occupancyRevision;
+    }
 }
 
 TicketNode* TicketList::findTicketByID(const string& ticketID) const {
-    TicketNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getTicketID() == ticketID) return temp;
-        temp = temp->getNextTicket();
-    }
-    return nullptr;
+    TicketNode* const* ticket = ticketsByID.find(ticketID);
+    return ticket ? *ticket : nullptr;
 }
 
 bool TicketList::cancelTicket(const string& ticketID) {
-    if (!head) return false;
+    TicketNode* const* indexedTicket = ticketsByID.find(ticketID);
+    if (!indexedTicket) return false;
 
-    // Trường hợp vé cần hủy nằm ngay đầu danh sách
-    if (head->getTicketID() == ticketID) {
-        TicketNode* temp = head;
-        head = head->getNextTicket();
-        if (!head) tail = nullptr; // Danh sách trở thành rỗng
-        delete temp;
-        return true;
+    LinkedList<TicketNode*>::Node* target = tickets.getHead();
+    while (target && target->data != *indexedTicket) {
+        target = target->next;
     }
+    if (!target) return false;
 
-    TicketNode* curr = head;
-    while (curr->getNextTicket() && curr->getNextTicket()->getTicketID() != ticketID) {
-        curr = curr->getNextTicket();
-    }
-
-    // Tìm thấy vé ở giữa hoặc cuối danh sách
-    if (curr->getNextTicket()) {
-        TicketNode* temp = curr->getNextTicket();
-        curr->setNextTicket(temp->getNextTicket());
-        if (temp == tail) {
-            tail = curr; // Cập nhật lại tail nếu hủy vé cuối cùng
+    const bool cacheWasCurrent =
+        builtOccupancyRevision == occupancyRevision && occupancyTrainList &&
+        builtTrainRevision == occupancyTrainList->getStructureRevision();
+    TicketNode* ticket = target->data;
+    if (cacheWasCurrent) updateSeatOccupancyForTicket(ticket, 1);
+    tickets.removeNode(target);
+    delete ticket;
+    ticketsByID.remove(ticketID);
+    for (LinkedList<TicketNode*>::Node* remaining = tickets.getHead();
+         remaining; remaining = remaining->next) {
+        if (remaining->data->getTicketID() == ticketID) {
+            ticketsByID.insert(ticketID, remaining->data);
+            break;
         }
-        delete temp;
-        return true;
     }
-    return false;
+    ++occupancyRevision;
+    if (cacheWasCurrent) builtOccupancyRevision = occupancyRevision;
+    return true;
+}
+
+void TicketList::updateSeatOccupancyForTicket(const TicketNode* ticket,
+                                               int delta) const {
+    if (!ticket || !occupancyTrainList) return;
+    TrainNode* train = occupancyTrainList->findTrainByCode(ticket->getTrainCode());
+    if (!train) return;
+
+    const int fromIndex = findScheduleIndex(train, ticket->getFromStationID());
+    const int toIndex = findScheduleIndex(train, ticket->getToStationID());
+    CarriageNode* carriage = train->findCarriage(ticket->getCarriageNo());
+    if (carriage && fromIndex >= 0 && toIndex > fromIndex &&
+        ticket->getSeatNo() >= 1 && ticket->getSeatNo() <= carriage->getTotalSeats()) {
+        carriage->updateSeatSegments(ticket->getSeatNo(), fromIndex,
+                                     toIndex - 1, delta);
+    }
+}
+
+void TicketList::ensureSeatOccupancy(TrainList* trainList) const {
+    if (!trainList ||
+        (builtOccupancyRevision == occupancyRevision && occupancyTrainList == trainList &&
+         builtTrainRevision == trainList->getStructureRevision())) {
+        return;
+    }
+
+    // Reset each seat's route tree once, then replay tickets in one pass.
+    for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+         trainNode; trainNode = trainNode->next) {
+        TrainNode* train = trainNode->data;
+        const int segmentCount = countScheduleStops(train) - 1;
+        for (LinkedList<CarriageNode*>::Node* carriageNode =
+                 train->getHeadCarriage(); carriageNode;
+             carriageNode = carriageNode->next) {
+            CarriageNode* carriage = carriageNode->data;
+            carriage->configureSeatSegments(segmentCount);
+        }
+    }
+
+    for (LinkedList<TicketNode*>::Node* ticketNode = tickets.getHead();
+         ticketNode; ticketNode = ticketNode->next) {
+        TicketNode* ticket = ticketNode->data;
+        TrainNode* train = trainList->findTrainByCode(ticket->getTrainCode());
+        if (!train) continue;
+
+        const int fromIndex = findScheduleIndex(train, ticket->getFromStationID());
+        const int toIndex = findScheduleIndex(train, ticket->getToStationID());
+        CarriageNode* carriage = train->findCarriage(ticket->getCarriageNo());
+        if (carriage && fromIndex >= 0 && toIndex > fromIndex &&
+            ticket->getSeatNo() >= 1 && ticket->getSeatNo() <= carriage->getTotalSeats()) {
+            carriage->updateSeatSegments(ticket->getSeatNo(), fromIndex, toIndex - 1, -1);
+        }
+    }
+
+    occupancyTrainList = trainList;
+    builtOccupancyRevision = occupancyRevision;
+    builtTrainRevision = trainList->getStructureRevision();
 }
 
 bool TicketList::checkCarriageSeats(StationList* stationList, TrainList* trainList,
@@ -2083,7 +2764,8 @@ bool TicketList::checkCarriageSeats(StationList* stationList, TrainList* trainLi
                                     int newFromID, int newToID,
                                     bool seatFreeOut[], int maxSeats) const 
 {
-    if (!stationList || !trainList || newFromID == newToID || maxSeats <= 0) return false;
+    if (!stationList || !trainList || !seatFreeOut ||
+        newFromID == newToID || maxSeats <= 0) return false;
 
     StationNode* stNewFrom = stationList->findStationByID(newFromID);
     StationNode* stNewTo   = stationList->findStationByID(newToID);
@@ -2092,51 +2774,16 @@ bool TicketList::checkCarriageSeats(StationList* stationList, TrainList* trainLi
     TrainNode* train = trainList->findTrainByCode(trainCode);
     if (!train) return false;
 
-    bool foundFrom = false;
-    bool validDirection = false;
-    StopScheduleNode* stop = train->getHeadSchedule();
-    while (stop != nullptr) {
-        if (stop->getStationID() == newFromID) {
-            foundFrom = true;
-        } else if (stop->getStationID() == newToID && foundFrom) {
-            validDirection = true;
-            break;
-        }
-        stop = stop->getNextStop();
-    }
+    const int fromIndex = findScheduleIndex(train, newFromID);
+    const int toIndex = findScheduleIndex(train, newToID);
+    CarriageNode* carriage = train->findCarriage(carriageNo);
+    if (!carriage || fromIndex < 0 || toIndex <= fromIndex ||
+        maxSeats > carriage->getTotalSeats()) return false;
 
-    if (!validDirection) {
-        return false; 
-    }
-
-    for (int i = 1; i <= maxSeats; ++i) {
-        seatFreeOut[i] = true;
-    }
-
-    double newKmStart = min(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
-    double newKmEnd   = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
-
-    TicketNode* curr = head;
-    while (curr != nullptr) {
-        int sNo = curr->getSeatNo();
-
-        if (curr->getTrainCode() == trainCode &&
-            curr->getCarriageNo() == carriageNo &&
-            sNo >= 1 && sNo <= maxSeats && seatFreeOut[sNo]) 
-        {
-            StationNode* stExistFrom = stationList->findStationByID(curr->getFromStationID());
-            StationNode* stExistTo   = stationList->findStationByID(curr->getToStationID());
-
-            if (stExistFrom && stExistTo) {
-                double existKmStart = min(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-                double existKmEnd   = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-
-                if (max(newKmStart, existKmStart) < min(newKmEnd, existKmEnd)) {
-                    seatFreeOut[sNo] = false;
-                }
-            }
-        }
-        curr = curr->getNextTicket();
+    ensureSeatOccupancy(trainList);
+    for (int seat = 1; seat <= maxSeats; ++seat) {
+        seatFreeOut[seat] =
+            carriage->isSeatAvailableOnSegments(seat, fromIndex, toIndex - 1);
     }
 
     return true;
@@ -2155,47 +2802,14 @@ bool TicketList::isSeatAvailable(StationList* stationList, TrainList* trainList,
     TrainNode* train = trainList->findTrainByCode(trainCode);
     if (!train) return false;
 
-    int maxSeats = train->getCarriageSeats(carriageNo);
-    if (maxSeats == 0 || seatNo <= 0 || seatNo > maxSeats) return false;
+    const int fromIndex = findScheduleIndex(train, newFromID);
+    const int toIndex = findScheduleIndex(train, newToID);
+    CarriageNode* carriage = train->findCarriage(carriageNo);
+    if (!carriage || seatNo <= 0 || seatNo > carriage->getTotalSeats() ||
+        fromIndex < 0 || toIndex <= fromIndex) return false;
 
-    bool foundFrom = false;
-    bool validDirection = false;
-    StopScheduleNode* stop = train->getHeadSchedule();
-    while (stop != nullptr) {
-        if (stop->getStationID() == newFromID) {
-            foundFrom = true;
-        } else if (stop->getStationID() == newToID && foundFrom) {
-            validDirection = true;
-            break;
-        }
-        stop = stop->getNextStop();
-    }
-    if (!validDirection) return false;
-
-    double newKmStart = min(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
-    double newKmEnd   = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
-
-    TicketNode* curr = head;
-    while (curr != nullptr) {
-        if (curr->getTrainCode() == trainCode &&
-            curr->getCarriageNo() == carriageNo &&
-            curr->getSeatNo() == seatNo) 
-        {
-            StationNode* stExistFrom = stationList->findStationByID(curr->getFromStationID());
-            StationNode* stExistTo   = stationList->findStationByID(curr->getToStationID());
-
-            if (stExistFrom && stExistTo) {
-                double existKmStart = min(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-                double existKmEnd   = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-
-                if (max(newKmStart, existKmStart) < min(newKmEnd, existKmEnd)) {
-                    return false;
-                }
-            }
-        }
-        curr = curr->getNextTicket();
-    }
-    return true;
+    ensureSeatOccupancy(trainList);
+    return carriage->isSeatAvailableOnSegments(seatNo, fromIndex, toIndex - 1);
 }
 
 ========================================
@@ -2204,23 +2818,32 @@ File: .\TicketList.h
 
 #pragma once
 #include <string>
-#include <vector>
 #include <iostream>
 #include "TicketNode.h"
+#include "LinkedList.h"
+#include "HashMap.h"
 
 class StationList;
 class TrainList;
 
 class TicketList {
 private:
-    TicketNode* head;
-    TicketNode* tail;
+    LinkedList<Ticket*> tickets;
+    HashMap<std::string, Ticket*, StringHash> ticketsByID;
+    unsigned long occupancyRevision;
+    mutable unsigned long builtOccupancyRevision;
+    mutable unsigned long builtTrainRevision;
+    mutable TrainList* occupancyTrainList;
+
+    void ensureSeatOccupancy(TrainList* trainList) const;
+    void updateSeatOccupancyForTicket(const TicketNode* ticket, int delta) const;
 
 public:
     TicketList();
     ~TicketList();
 
-    TicketNode* getHead() const { return head; }
+    LinkedList<Ticket*>::Node* getHead() const { return tickets.getHead(); }
+    int getSize() const { return tickets.getSize(); }
     void clear();
 
     void addTicket(const std::string& ticketID, const std::string& trainCode, 
@@ -2246,20 +2869,17 @@ File: .\TicketNode.h
 
 #include <string>
 
-class TicketNode {
-private:
+struct Ticket {
     std::string ticketID;
     std::string trainCode;
     int carriageNo;
     int seatNo;
     int fromStationID;
     int toStationID;
-    TicketNode* nextTicket;
-
 public:
-    TicketNode(const std::string& tID, const std::string& tCode, int cNo, int sNo, int fromID, int toID)
+    Ticket(const std::string& tID, const std::string& tCode, int cNo, int sNo, int fromID, int toID)
         : ticketID(tID), trainCode(tCode), carriageNo(cNo), seatNo(sNo), 
-          fromStationID(fromID), toStationID(toID), nextTicket(nullptr) {}
+          fromStationID(fromID), toStationID(toID) {}
 
     std::string getTicketID() const { return ticketID; }
     std::string getTrainCode() const { return trainCode; }
@@ -2267,324 +2887,488 @@ public:
     int getSeatNo() const { return seatNo; }
     int getFromStationID() const { return fromStationID; }
     int getToStationID() const { return toStationID; }
-    TicketNode* getNextTicket() const { return nextTicket; }
-
-    void setNextTicket(TicketNode* next) { nextTicket = next; }
 };
+
+typedef Ticket TicketNode;
 
 
 ========================================
 File: .\TrainList.cpp
 ========================================
 
-// ==================== File: TrainList.cpp ====================
 #include "TrainList.h"
 #include "StationList.h"
 #include "StopScheduleNode.h"
 #include "StationNode.h"
-#include <iostream>
-#include <algorithm>
-#include <sstream>
+#include "MinHeap.h"
 #include <iomanip>
+#include <sstream>
 
 using namespace std;
 
-static string formatTimeHHMM(int totalMinutes) {
-    int h = (totalMinutes / 60) % 24;
-    int m = totalMinutes % 60;
-    stringstream ss;
-    ss << setfill('0') << setw(2) << h << ":" << setfill('0') << setw(2) << m;
-    return ss.str();
+namespace {
+string formatTimeHHMM(int totalMinutes) {
+    int hour = (totalMinutes / 60) % 24;
+    int minute = totalMinutes % 60;
+    stringstream stream;
+    stream << setfill('0') << setw(2) << hour << ":"
+           << setfill('0') << setw(2) << minute;
+    return stream.str();
 }
 
-TrainList::TrainList() : head(nullptr), tail(nullptr), logStart(0), logCount(0) {}
+struct ScheduleEvent {
+    int time;
+    int endTime;
+    int type; // 0: ga/ray, 1: khu gian
+    int stationID;
+    int targetStationID;
+    int track;
+    int sequence;
+    unsigned long trainRevision;
+    TrainNode* train;
+    StopScheduleNode* stop;
+    StopScheduleNode* nextStop;
+    string trainCode;
+
+    ScheduleEvent()
+        : time(0), endTime(0), type(0), stationID(0), targetStationID(0),
+          track(0), sequence(0), trainRevision(0), train(nullptr),
+          stop(nullptr), nextStop(nullptr) {}
+};
+
+bool isCurrentEvent(const ScheduleEvent& event) {
+    return event.train &&
+           event.trainRevision == event.train->getScheduleRevision();
+}
+
+struct ScheduleEventBefore {
+    bool operator()(const ScheduleEvent& left, const ScheduleEvent& right) const {
+        if (left.time != right.time) return left.time < right.time;
+        if (left.train->getPriority() != right.train->getPriority()) {
+            return left.train->getPriority() < right.train->getPriority();
+        }
+        return left.sequence < right.sequence;
+    }
+};
+
+void pushTrainEvents(MinHeap<ScheduleEvent, ScheduleEventBefore>& events,
+                     TrainNode* train, int& sequence, int safetyHeadway) {
+    LinkedList<StopScheduleNode*>::Node* stopNode = train->getHeadSchedule();
+    while (stopNode) {
+        StopScheduleNode* stop = stopNode->data;
+        ScheduleEvent stationEvent;
+        stationEvent.time = stop->getArrivalMinute();
+        stationEvent.endTime = stop->getDepartureMinute() + safetyHeadway;
+        stationEvent.type = 0;
+        stationEvent.stationID = stop->getStationID();
+        stationEvent.targetStationID = stop->getStationID();
+        stationEvent.track = stop->getTrackUsed();
+        stationEvent.sequence = sequence++;
+        stationEvent.trainRevision = train->getScheduleRevision();
+        stationEvent.train = train;
+        stationEvent.stop = stop;
+        stationEvent.trainCode = train->getTrainCode();
+        if (stationEvent.endTime > stationEvent.time) {
+            events.push(stationEvent);
+        }
+
+        if (stopNode->next) {
+            StopScheduleNode* nextStop = stopNode->next->data;
+            ScheduleEvent blockEvent;
+            blockEvent.time = stop->getDepartureMinute();
+            blockEvent.endTime = nextStop->getArrivalMinute() + safetyHeadway;
+            blockEvent.type = 1;
+            blockEvent.stationID = stop->getStationID();
+            blockEvent.targetStationID = nextStop->getStationID();
+            blockEvent.sequence = sequence++;
+            blockEvent.trainRevision = train->getScheduleRevision();
+            blockEvent.train = train;
+            blockEvent.stop = stop;
+            blockEvent.nextStop = nextStop;
+            blockEvent.trainCode = train->getTrainCode();
+            if (blockEvent.endTime > blockEvent.time) {
+                events.push(blockEvent);
+            }
+        }
+        stopNode = stopNode->next;
+    }
+}
+
+bool sameResource(const ScheduleEvent& left, const ScheduleEvent& right) {
+    if (left.type != right.type) return false;
+    if (left.type == 0) {
+        return left.stationID == right.stationID && left.track == right.track;
+    }
+    return (left.stationID == right.stationID &&
+            left.targetStationID == right.targetStationID) ||
+           (left.stationID == right.targetStationID &&
+            left.targetStationID == right.stationID);
+}
+
+struct ResourceSlot {
+    ScheduleEvent event;
+    int state; // 0: empty, 1: occupied, 2: deleted
+
+    ResourceSlot() : state(0) {}
+};
+
+int resourceHash(const ScheduleEvent& event, int capacity) {
+    int firstStation = event.stationID;
+    int secondStation = event.targetStationID;
+    if (event.type == 1 && firstStation > secondStation) {
+        const int temp = firstStation;
+        firstStation = secondStation;
+        secondStation = temp;
+    }
+
+    unsigned long hash = static_cast<unsigned long>(event.type + 1);
+    hash = hash * 16777619UL + static_cast<unsigned long>(firstStation);
+    hash = hash * 16777619UL + static_cast<unsigned long>(secondStation);
+    hash = hash * 16777619UL + static_cast<unsigned long>(event.track);
+    return static_cast<int>(hash % static_cast<unsigned long>(capacity));
+}
+
+int findResourceSlot(ResourceSlot* slots, int capacity,
+                     const ScheduleEvent& event, bool& found) {
+    int index = resourceHash(event, capacity);
+    int firstDeleted = -1;
+    found = false;
+
+    for (int probes = 0; probes < capacity; ++probes) {
+        if (slots[index].state == 0) {
+            return firstDeleted >= 0 ? firstDeleted : index;
+        }
+        if (slots[index].state == 2) {
+            if (firstDeleted < 0) firstDeleted = index;
+        } else if (sameResource(slots[index].event, event)) {
+            found = true;
+            return index;
+        }
+        index = (index + 1) % capacity;
+    }
+    return firstDeleted;
+}
+
+void growResourceTable(ResourceSlot*& slots, int& capacity, int& activeCount) {
+    const int newCapacity = capacity * 2;
+    ResourceSlot* expanded = new ResourceSlot[newCapacity];
+    int retainedCount = 0;
+    for (int i = 0; i < capacity; ++i) {
+        if (slots[i].state != 1 || !isCurrentEvent(slots[i].event)) {
+            continue;
+        }
+        const int start = resourceHash(slots[i].event, newCapacity);
+        int index = start;
+        while (expanded[index].state == 1) {
+            index = (index + 1) % newCapacity;
+        }
+        expanded[index] = slots[i];
+        ++retainedCount;
+    }
+    delete[] slots;
+    slots = expanded;
+    capacity = newCapacity;
+    activeCount = retainedCount;
+}
+}
+
+TrainList::TrainList()
+    : trains(), trainsByCode(), structureRevision(0), logStart(0), logCount(0) {}
 
 TrainList::~TrainList() {
     clear();
 }
 
 void TrainList::clear() {
-    while (head != nullptr) {
-        TrainNode* temp = head;
-        head = head->getNextTrain();
-        delete temp;
+    LinkedList<TrainNode*>::Node* train = trains.getHead();
+    while (train) {
+        delete train->data;
+        train = train->next;
     }
-    head = nullptr;
-    tail = nullptr;
+    trains.clear();
+    trainsByCode.clear();
+    ++structureRevision;
 }
 
-TrainNode* TrainList::getHead() const { return head; }
+LinkedList<TrainNode*>::Node* TrainList::getHead() const {
+    return trains.getHead();
+}
 
 void TrainList::addTrain(const string& code, int direction, int priority) {
     TrainNode* newNode = new TrainNode(code, direction, priority);
-    if (!head) {
-        head = tail = newNode;
-        return;
+    trains.pushBack(newNode);
+    if (!trainsByCode.find(code)) {
+        trainsByCode.insert(code, newNode);
     }
-    tail->setNextTrain(newNode);
-    tail = newNode;
+    ++structureRevision;
 }
 
 TrainNode* TrainList::findTrainByCode(const string& code) const {
-    TrainNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getTrainCode() == code) return temp;
-        temp = temp->getNextTrain();
+    TrainNode* const* train = trainsByCode.find(code);
+    return train ? *train : nullptr;
+}
+
+void TrainList::addCarriageToTrain(const string& code, int carriageNo,
+                                   const string& type, int seats) {
+    TrainNode* train = findTrainByCode(code);
+    if (train) {
+        train->addCarriage(carriageNo, type, seats);
+        ++structureRevision;
     }
-    return nullptr;
 }
 
-void TrainList::addCarriageToTrain(const string& code, int cNo, const string& type, int seats) {
+void TrainList::addStopScheduleToTrain(const string& code, int stationID,
+                                       int arrival, int departure, int track) {
     TrainNode* train = findTrainByCode(code);
-    if (train) train->addCarriage(cNo, type, seats);
+    if (train) {
+        train->addSchedule(stationID, arrival, departure, track);
+        ++structureRevision;
+    }
 }
 
-void TrainList::addStopScheduleToTrain(const string& code, int stID, int arr, int dep, int track) {
-    TrainNode* train = findTrainByCode(code);
-    if (train) train->addSchedule(stID, arr, dep, track);
-}
-
-void TrainList::addConflictLog(const std::string& logMsg) {
+void TrainList::addConflictLog(const string& logMessage) {
     if (logCount < MAX_LOGS) {
-        // Chưa đầy mảng: ghi tiếp vào vị trí kế
-        int insertIdx = (logStart + logCount) % MAX_LOGS;
-        conflictLogs[insertIdx] = logMsg;
-        logCount++;
+        const int insertIndex = (logStart + logCount) % MAX_LOGS;
+        conflictLogs[insertIndex] = logMessage;
+        ++logCount;
     } else {
-        // Đã đầy: ghi đè lên phần tử cũ nhất và dịch vị trí bắt đầu sang phải
-        conflictLogs[logStart] = logMsg;
+        conflictLogs[logStart] = logMessage;
         logStart = (logStart + 1) % MAX_LOGS;
     }
 }
 
-std::string TrainList::getLog(int index) const {
+string TrainList::getLog(int index) const {
     if (index < 0 || index >= logCount) return "";
-    int actualIdx = (logStart + index) % MAX_LOGS;
-    return conflictLogs[actualIdx];
+    return conflictLogs[(logStart + index) % MAX_LOGS];
 }
 
-// Tìm ray phụ trống từ ray 2 đến maxTracks tại ga stationID
-int TrainList::findAvailableSidingTrack(int stationID, int arr, int dep, int maxTracks, TrainNode* excludeTrain) const {
+int TrainList::findAvailableSidingTrack(int stationID, int arrival, int departure,
+                                        int maxTracks, TrainNode* excludeTrain) const {
     if (maxTracks <= 1) return -1;
 
-    const int HEADWAY = 10; // Khoảng đệm an toàn
-
+    const int HEADWAY = 10;
     for (int candidateTrack = 2; candidateTrack <= maxTracks; ++candidateTrack) {
         bool occupied = false;
-        for (TrainNode* tr = head; tr != nullptr; tr = tr->getNextTrain()) {
-            if (tr == excludeTrain) continue;
+        for (LinkedList<TrainNode*>::Node* trainNode = trains.getHead();
+             trainNode && !occupied; trainNode = trainNode->next) {
+            TrainNode* train = trainNode->data;
+            if (train == excludeTrain) continue;
 
-            for (StopScheduleNode* st = tr->getHeadSchedule(); st != nullptr; st = st->getNextStop()) {
-                if (st->getStationID() == stationID && st->getTrackUsed() == candidateTrack) {
-                    
-                    // Dùng std::max và std::min có cộng HEADWAY
-                    int overlapStart = std::max(arr, st->getArrivalMinute());
-                    int overlapEnd   = std::min(dep + HEADWAY, st->getDepartureMinute() + HEADWAY);
+            for (LinkedList<StopScheduleNode*>::Node* stopNode =
+                     train->getHeadSchedule(); stopNode; stopNode = stopNode->next) {
+                StopScheduleNode* stop = stopNode->data;
+                if (stop->getStationID() != stationID ||
+                    stop->getTrackUsed() != candidateTrack) continue;
 
-                    if (overlapStart < overlapEnd) {
-                        occupied = true;
-                        break;
-                    }
+                const int overlapStart = arrival > stop->getArrivalMinute()
+                    ? arrival : stop->getArrivalMinute();
+                const int stopEnd = stop->getDepartureMinute() + HEADWAY;
+                const int requestedEnd = departure + HEADWAY;
+                const int overlapEnd = requestedEnd < stopEnd
+                    ? requestedEnd : stopEnd;
+                if (overlapStart < overlapEnd) {
+                    occupied = true;
+                    break;
                 }
             }
-            if (occupied) break;
         }
         if (!occupied) return candidateTrack;
     }
     return -1;
 }
 
-// ==================== THUẬT TOÁN TÁI LẬP LỊCH TRÁNH TÀU ĐA LƯỢT ====================
 void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
     if (!stationList) return;
 
-    const int SAFETY_HEADWAY = 10; // Khoảng cách an toàn tối thiểu (10 phút)
-    const int MAX_PASSES = 10;     // Giới hạn vòng lặp giải tỏa domino
-    int passCount = 0;
-    bool conflictFound = false;
+    const int SAFETY_HEADWAY = 10;
+    MinHeap<ScheduleEvent, ScheduleEventBefore> events;
+    int sequence = 0;
+    for (LinkedList<TrainNode*>::Node* trainNode = trains.getHead();
+         trainNode; trainNode = trainNode->next) {
+        TrainNode* train = trainNode->data;
+        pushTrainEvents(events, train, sequence, SAFETY_HEADWAY);
+    }
 
-    do {
-        conflictFound = false;
-        passCount++;
+    int resourceCapacity = 8;
+    ResourceSlot* activeResources = new ResourceSlot[resourceCapacity];
+    int activeResourceCount = 0;
 
-        for (TrainNode* t1 = head; t1 != nullptr; t1 = t1->getNextTrain()) {
-            for (TrainNode* t2 = t1->getNextTrain(); t2 != nullptr; t2 = t2->getNextTrain()) {
-
-                StopScheduleNode* s1 = t1->getHeadSchedule();
-                while (s1 != nullptr) {
-                    StopScheduleNode* s2 = t2->getHeadSchedule();
-
-                    while (s2 != nullptr) {
-                        // =========================================================================
-                        // TRƯỜNG HỢP 1: XUNG ĐỘT CÙNG GA CÙNG THỜI ĐIỂM & CÙNG RAY (Station Conflict)
-                        // =========================================================================
-                        if (s1->getStationID() == s2->getStationID() && s1->getTrackUsed() == s2->getTrackUsed()) {
-                            
-                            // Sử dụng std::max / std::min có cộng khoảng đệm an toàn
-                            int startOverlap = std::max(s1->getArrivalMinute(), s2->getArrivalMinute());
-                            int endOverlap   = std::min(s1->getDepartureMinute() + SAFETY_HEADWAY, 
-                                                        s2->getDepartureMinute() + SAFETY_HEADWAY);
-
-                            // Phát hiện cấn giờ an toàn tại ga
-                            if (startOverlap < endOverlap) {
-                                // Phân định tàu nhường: Priority trước, FCFS sau
-                                bool t2Yields = true;
-                                if (t1->getPriority() != t2->getPriority()) {
-                                    t2Yields = (t2->getPriority() > t1->getPriority());
-                                } else {
-                                    t2Yields = (s2->getArrivalMinute() >= s1->getArrivalMinute());
-                                }
-
-                                TrainNode* yieldTrain = t2Yields ? t2 : t1;
-                                TrainNode* prioTrain  = t2Yields ? t1 : t2;
-                                StopScheduleNode* yieldStop = t2Yields ? s2 : s1;
-                                StopScheduleNode* prioStop  = t2Yields ? s1 : s2;
-
-                                StationNode* currStation = stationList->findStationByID(yieldStop->getStationID());
-                                int maxTracks = currStation ? currStation->getMaxTracks() : 1;
-
-                                // Dò ray phụ trống tại ga hiện tại
-                                int freeSiding = findAvailableSidingTrack(
-                                    yieldStop->getStationID(), yieldStop->getArrivalMinute(),
-                                    yieldStop->getDepartureMinute(), maxTracks, yieldTrain
-                                );
-
-                                if (freeSiding != -1) {
-                                    // Ga có ray phụ -> Dạt vào ray phụ an toàn
-                                    yieldStop->setTrackUsed(freeSiding);
-                                    conflictFound = true;
-                                    addConflictLog("[Ga " + std::to_string(yieldStop->getStationID()) + "] " +
-                                                   yieldTrain->getTrainCode() + " (P" + std::to_string(yieldTrain->getPriority()) +
-                                                   ") vao Ray " + std::to_string(freeSiding) + " nhuong " + prioTrain->getTrainCode());
-                                } else {
-                                    // Hết ray phụ hoặc ga chỉ có 1 ray -> Đẩy lùi lịch trình về ga trước
-                                    StopScheduleNode* prevStop = yieldTrain->findPreviousStop(yieldStop);
-                                    int extraWait = std::max(0, prioStop->getDepartureMinute() - yieldStop->getArrivalMinute() + SAFETY_HEADWAY);
-
-                                    if (extraWait > 0) {
-                                        if (prevStop != nullptr) {
-                                            // Lùi giờ khởi hành tại ga trước
-                                            prevStop->setDepartureMinute(prevStop->getDepartureMinute() + extraWait);
-                                            
-                                            StationNode* prevSt = stationList->findStationByID(prevStop->getStationID());
-                                            int prevMaxTracks = prevSt ? prevSt->getMaxTracks() : 1;
-                                            
-                                            // Kiểm tra ray trống tại ga trước trong khung giờ mới
-                                            int prevSiding = findAvailableSidingTrack(
-                                                prevStop->getStationID(), prevStop->getArrivalMinute(),
-                                                prevStop->getDepartureMinute(), prevMaxTracks, yieldTrain
-                                            );
-                                            
-                                            if (prevSiding != -1) {
-                                                prevStop->setTrackUsed(prevSiding); // Có ray phụ -> vào ray phụ
-                                            }
-                                            // Lan truyền trễ
-                                            yieldTrain->applyDelayPropagation(yieldStop->getStationID(), extraWait, true);
-                                            addConflictLog("[Ga 1-Ray " + std::to_string(yieldStop->getStationID()) + "] Giu " +
-                                                           yieldTrain->getTrainCode() + " tai Ga " + std::to_string(prevStop->getStationID()) +
-                                                           " +" + std::to_string(extraWait) + "p nhuong " + prioTrain->getTrainCode());
-                                        } else {
-                                            // Trường hợp biên: Tàu đang ở ga xuất phát đầu tiên, không thể lùi được nữa
-                                            yieldTrain->applyDelayPropagation(yieldStop->getStationID(), extraWait, true);
-                                            addConflictLog("[Ga Dau " + std::to_string(yieldStop->getStationID()) + "] Lui khoi hanh " +
-                                                           yieldTrain->getTrainCode() + " +" + std::to_string(extraWait) + "p");
-                                        }
-                                        conflictFound = true; // Kích hoạt Multi-pass lượt kế tiếp
-                                    }
-                                }
-                            }
-                        }
-
-                        // =========================================================================
-                        // TRƯỜNG HỢP 2: XUNG ĐỘT KHU GIAN ĐƯỜNG ĐƠN (Block Section Conflict)
-                        // =========================================================================
-                        StopScheduleNode* nextS1 = s1->getNextStop();
-                        StopScheduleNode* nextS2 = s2->getNextStop();
-
-                        if (nextS1 != nullptr && nextS2 != nullptr) {
-                            bool isHeadOn  = (s1->getStationID() == nextS2->getStationID() && nextS1->getStationID() == s2->getStationID());
-                            bool isRearEnd = (s1->getStationID() == s2->getStationID() && nextS1->getStationID() == nextS2->getStationID());
-
-                            if (isHeadOn || isRearEnd) {
-                                int t1_start = s1->getDepartureMinute();
-                                int t1_end   = nextS1->getArrivalMinute();
-                                int t2_start = s2->getDepartureMinute();
-                                int t2_end   = nextS2->getArrivalMinute();
-
-                                // Kiểm tra 2 tàu có cùng xuất hiện trên khu gian không
-                                int trackOverlapStart = std::max(t1_start, t2_start);
-                                int trackOverlapEnd   = std::min(t1_end, t2_end);
-
-                                if (trackOverlapStart < trackOverlapEnd) {
-                                    // Phân định tàu nhường
-                                    bool t2Yields = true;
-                                    if (t1->getPriority() != t2->getPriority()) {
-                                        t2Yields = (t2->getPriority() > t1->getPriority());
-                                    } else {
-                                        t2Yields = (t2_start >= t1_start);
-                                    }
-
-                                    TrainNode* yieldTrain = t2Yields ? t2 : t1;
-                                    TrainNode* prioTrain  = t2Yields ? t1 : t2;
-                                    StopScheduleNode* yieldStop = t2Yields ? s2 : s1;
-                                    StopScheduleNode* yieldNext = t2Yields ? nextS2 : nextS1;
-                                    
-                                    int prioEnd  = t2Yields ? t1_end : t2_end;
-                                    int yieldDep = t2Yields ? t2_start : t1_start;
-
-                                    int extraWaitTime = std::max(0, prioEnd - yieldDep + SAFETY_HEADWAY);
-
-                                    if (extraWaitTime > 0) {
-                                        // Cộng giờ chờ tại ga trước khi vào khu gian
-                                        yieldStop->setDepartureMinute(yieldStop->getDepartureMinute() + extraWaitTime);
-
-                                        StationNode* waitSt = stationList->findStationByID(yieldStop->getStationID());
-                                        int maxTracks = waitSt ? waitSt->getMaxTracks() : 1;
-                                        
-                                        // Tìm ray phụ trong thời gian chờ
-                                        int freeSiding = findAvailableSidingTrack(
-                                            yieldStop->getStationID(), yieldStop->getArrivalMinute(),
-                                            yieldStop->getDepartureMinute(), maxTracks, yieldTrain
-                                        );
-                                        
-                                        if (freeSiding != -1) yieldStop->setTrackUsed(freeSiding);
-
-                                        // Lan truyền trễ
-                                        yieldTrain->applyDelayPropagation(yieldNext->getStationID(), extraWaitTime, true);
-
-                                        conflictFound = true;
-                                        addConflictLog("[Khu gian " + std::to_string(yieldStop->getStationID()) + "->" +
-                                                       std::to_string(yieldNext->getStationID()) + "] " + yieldTrain->getTrainCode() +
-                                                       " (P" + std::to_string(yieldTrain->getPriority()) + ") cho " +
-                                                       prioTrain->getTrainCode() + " +" + std::to_string(extraWaitTime) +
-                                                       "p (Xuat phat: " + formatTimeHHMM(yieldStop->getDepartureMinute()) + ")");
-                                    }
-                                }
-                            }
-                        }
-
-                        s2 = s2->getNextStop();
-                    }
-                    s1 = s1->getNextStop();
-                }
-            }
+    while (!events.isEmpty()) {
+        const ScheduleEvent current = events.top();
+        events.pop();
+        if (!isCurrentEvent(current)) {
+            continue;
         }
-    } while (conflictFound && passCount < MAX_PASSES);
+
+        bool resourceFound = false;
+        const int resourceIndex = findResourceSlot(activeResources,
+                                                   resourceCapacity,
+                                                   current, resourceFound);
+        if (resourceIndex < 0) {
+            delete[] activeResources;
+            addConflictLog("[Loi] Khong the cap phat o trang thai tai nguyen lich tau.");
+            return;
+        }
+
+        if (resourceFound &&
+            (!isCurrentEvent(activeResources[resourceIndex].event) ||
+             activeResources[resourceIndex].event.endTime <= current.time)) {
+            activeResources[resourceIndex].state = 2;
+            --activeResourceCount;
+            resourceFound = false;
+        }
+
+        if (!resourceFound) {
+            if ((activeResourceCount + 1) * 4 > resourceCapacity * 3) {
+                growResourceTable(activeResources, resourceCapacity,
+                                  activeResourceCount);
+                const int expandedIndex = findResourceSlot(
+                    activeResources, resourceCapacity, current, resourceFound);
+                if (expandedIndex < 0) {
+                    delete[] activeResources;
+                    addConflictLog("[Loi] Khong the cap phat o trang thai tai nguyen lich tau.");
+                    return;
+                }
+                if (resourceFound) {
+                    activeResources[expandedIndex].event = current;
+                    activeResources[expandedIndex].state = 1;
+                    continue;
+                }
+                if (activeResources[expandedIndex].state == 0) {
+                    ++activeResourceCount;
+                }
+                activeResources[expandedIndex].event = current;
+                activeResources[expandedIndex].state = 1;
+                continue;
+            }
+            if (activeResources[resourceIndex].state == 0) {
+                ++activeResourceCount;
+            }
+            activeResources[resourceIndex].event = current;
+            activeResources[resourceIndex].state = 1;
+            continue;
+        }
+
+        const ScheduleEvent other = activeResources[resourceIndex].event;
+        if (other.train == current.train) {
+            if (current.endTime > activeResources[resourceIndex].event.endTime) {
+                activeResources[resourceIndex].event.endTime = current.endTime;
+            }
+            continue;
+        }
+
+        const bool currentYields =
+            current.train->getPriority() != other.train->getPriority()
+                ? current.train->getPriority() > other.train->getPriority()
+                : (current.time != other.time
+                       ? current.time > other.time
+                       : current.sequence > other.sequence);
+        const ScheduleEvent& yielding = currentYields ? current : other;
+        const ScheduleEvent& priority = currentYields ? other : current;
+        TrainNode* yieldingTrain = yielding.train;
+        TrainNode* priorityTrain = priority.train;
+        bool changed = false;
+
+        if (yielding.type == 0) {
+            StationNode* station =
+                stationList->findStationByID(yielding.stationID);
+            const int trackCount = station ? station->getMaxTracks() : 1;
+            const int siding = findAvailableSidingTrack(
+                yielding.stationID, yielding.stop->getArrivalMinute(),
+                yielding.stop->getDepartureMinute(), trackCount, yieldingTrain);
+
+            if (siding != -1) {
+                yielding.stop->setTrackUsed(siding);
+                addConflictLog("[Ga " + to_string(yielding.stationID) + "] " +
+                               yieldingTrain->getTrainCode() + " (P" +
+                               to_string(yieldingTrain->getPriority()) +
+                               ") vao Ray " + to_string(siding) + " nhuong " +
+                               priorityTrain->getTrainCode());
+                changed = true;
+            } else {
+                const int wait = priority.endTime - yielding.time;
+                if (wait <= 0) {
+                    continue;
+                }
+
+                StopScheduleNode* previous =
+                    yieldingTrain->findPreviousStop(yielding.stop);
+                if (previous) {
+                    previous->setDepartureMinute(previous->getDepartureMinute() + wait);
+                    StationNode* previousStation =
+                        stationList->findStationByID(previous->getStationID());
+                    const int previousTracks =
+                        previousStation ? previousStation->getMaxTracks() : 1;
+                    const int previousSiding = findAvailableSidingTrack(
+                        previous->getStationID(), previous->getArrivalMinute(),
+                        previous->getDepartureMinute(), previousTracks, yieldingTrain);
+                    if (previousSiding != -1) {
+                        previous->setTrackUsed(previousSiding);
+                    }
+                }
+
+                yieldingTrain->applyDelayPropagation(yielding.stationID, wait, true);
+                addConflictLog("[Ga " + to_string(yielding.stationID) + "] Giu " +
+                               yieldingTrain->getTrainCode() + " tai ga truoc +" +
+                               to_string(wait) + "p nhuong " +
+                               priorityTrain->getTrainCode());
+                changed = true;
+            }
+        } else {
+            const int wait = priority.endTime - yielding.time;
+            if (wait <= 0) {
+                continue;
+            }
+
+            yielding.stop->setDepartureMinute(yielding.stop->getDepartureMinute() + wait);
+            StationNode* waitStation =
+                stationList->findStationByID(yielding.stationID);
+            const int waitTracks = waitStation ? waitStation->getMaxTracks() : 1;
+            const int siding = findAvailableSidingTrack(
+                yielding.stationID, yielding.stop->getArrivalMinute(),
+                yielding.stop->getDepartureMinute(), waitTracks, yieldingTrain);
+            if (siding != -1) {
+                yielding.stop->setTrackUsed(siding);
+            }
+            yieldingTrain->applyDelayPropagation(yielding.targetStationID, wait, true);
+            addConflictLog("[Khu gian " + to_string(yielding.stationID) + "->" +
+                           to_string(yielding.targetStationID) + "] " +
+                           yieldingTrain->getTrainCode() + " (P" +
+                           to_string(yieldingTrain->getPriority()) + ") cho " +
+                           priorityTrain->getTrainCode() + " +" + to_string(wait) +
+                           "p (Xuat phat: " +
+                           formatTimeHHMM(yielding.stop->getDepartureMinute()) + ")");
+            changed = true;
+        }
+
+        if (changed) {
+            if (!currentYields) {
+                activeResources[resourceIndex].event = current;
+                activeResources[resourceIndex].state = 1;
+            }
+            yieldingTrain->bumpScheduleRevision();
+            pushTrainEvents(events, yieldingTrain, sequence, SAFETY_HEADWAY);
+        }
+    }
+    delete[] activeResources;
 }
 
-// ==================== THUẬT TOÁN DELAY PROPAGATION TRỌN GÓI ====================
-bool TrainList::applyDelayAndReschedule(const string& trainCode, int fromStationID, int delayMinutes, StationList* stationList) {
+bool TrainList::applyDelayAndReschedule(const string& trainCode, int fromStationID,
+                                        int delayMinutes, StationList* stationList) {
     TrainNode* train = findTrainByCode(trainCode);
     if (!train) return false;
 
-    addConflictLog("[Su co] Tau " + trainCode + " bi tre +" + to_string(delayMinutes) + "p tu Ga " + to_string(fromStationID));
-    bool ok = train->applyDelayPropagation(fromStationID, delayMinutes, true);
-
-    if (ok) {
+    addConflictLog("[Su co] Tau " + trainCode + " bi tre +" +
+                   to_string(delayMinutes) + "p tu Ga " +
+                   to_string(fromStationID));
+    const bool delayed =
+        train->applyDelayPropagation(fromStationID, delayMinutes, true);
+    if (delayed) {
         resolveConflictAndScheduleSiding(stationList);
     }
-    return ok;
+    return delayed;
 }
+
 
 ========================================
 File: .\TrainList.h
@@ -2593,15 +3377,17 @@ File: .\TrainList.h
 #pragma once
 #include <iostream>
 #include <string>
-#include <vector>
 #include "TrainNode.h"
+#include "LinkedList.h"
+#include "HashMap.h"
 
 class StationList;
 
 class TrainList {
 private:
-    TrainNode* head;
-    TrainNode* tail;
+    LinkedList<Train*> trains;
+    HashMap<std::string, Train*, StringHash> trainsByCode;
+    unsigned long structureRevision;
 
     // Thay thế vector bằng Circular Buffer tĩnh (tối đa 8 thông báo)
     static const int MAX_LOGS = 8;
@@ -2617,7 +3403,9 @@ public:
     ~TrainList();
     void clear();
 
-    TrainNode* getHead() const;
+    LinkedList<Train*>::Node* getHead() const;
+    int getSize() const { return trains.getSize(); }
+    unsigned long getStructureRevision() const { return structureRevision; }
     void addTrain(const std::string& code, int direction, int priority = -1);
     TrainNode* findTrainByCode(const std::string& code) const;
     void addCarriageToTrain(const std::string& code, int cNo, const std::string& type, int seats);
@@ -2640,17 +3428,15 @@ File: .\TrainNode.h
 #include <string>
 #include "CarriageNode.h"
 #include "StopScheduleNode.h"
+#include "LinkedList.h"
 
-class TrainNode {
-private:
+struct Train {
     std::string trainCode;
     int direction; // 1: Nam, 0: Bac
     int priority;  // 1: Tau khach nhanh SE, 2: Tau thuong TN, 3: Tau hang
-    CarriageNode* headCarriage;
-    CarriageNode* tailCarriage;
-    StopScheduleNode* headSchedule;
-    StopScheduleNode* tailSchedule;
-    TrainNode* nextTrain;
+    LinkedList<Carriage*> carriages;
+    LinkedList<StopSchedule*> schedule;
+    unsigned long scheduleRevision;
 
 public:
     static int inferPriorityFromCode(const std::string& code) {
@@ -2659,22 +3445,21 @@ public:
         return 3;                               // Ưu tiên thấp nhất: Tàu hàng (HH, GS...)
     }
 
-    TrainNode(const std::string& code, int dir, int prio = -1)
+    Train(const std::string& code, int dir, int prio = -1)
         : trainCode(code), direction(dir), 
           priority(prio > 0 ? prio : inferPriorityFromCode(code)),
-          headCarriage(nullptr), tailCarriage(nullptr),
-          headSchedule(nullptr), tailSchedule(nullptr), nextTrain(nullptr) {}
+          scheduleRevision(0) {}
 
-    ~TrainNode() {
-        while (headCarriage) {
-            CarriageNode* temp = headCarriage;
-            headCarriage = headCarriage->getNextCarriage();
-            delete temp;
+    ~Train() {
+        LinkedList<Carriage*>::Node* carriage = carriages.getHead();
+        while (carriage) {
+            delete carriage->data;
+            carriage = carriage->next;
         }
-        while (headSchedule) {
-            StopScheduleNode* temp = headSchedule;
-            headSchedule = headSchedule->getNextStop();
-            delete temp;
+        LinkedList<StopSchedule*>::Node* stop = schedule.getHead();
+        while (stop) {
+            delete stop->data;
+            stop = stop->next;
         }
     }
 
@@ -2682,74 +3467,71 @@ public:
     std::string getTrainCode() const { return trainCode; }
     int getDirection() const { return direction; }
     int getPriority() const { return priority; }
-    CarriageNode* getHeadCarriage() const { return headCarriage; }
-    StopScheduleNode* getHeadSchedule() const { return headSchedule; }
-    StopScheduleNode* getTailSchedule() const { return tailSchedule; }
-    TrainNode* getNextTrain() const { return nextTrain; }
+    LinkedList<Carriage*>::Node* getHeadCarriage() const { return carriages.getHead(); }
+    LinkedList<StopSchedule*>::Node* getHeadSchedule() const { return schedule.getHead(); }
+    LinkedList<StopSchedule*>::Node* getTailSchedule() const { return schedule.getTail(); }
+    unsigned long getScheduleRevision() const { return scheduleRevision; }
 
     // Setters
     void setPriority(int prio) { priority = prio; }
-    void setNextTrain(TrainNode* next) { nextTrain = next; }
+    void bumpScheduleRevision() { ++scheduleRevision; }
 
     // Chèn toa xe độ phức tạp O(1)
     void addCarriage(int cNo, const std::string& type, int seats) {
-        CarriageNode* newNode = new CarriageNode(cNo, type, seats);
-        if (!headCarriage) {
-            headCarriage = tailCarriage = newNode;
-            return;
-        }
-        tailCarriage->setNextCarriage(newNode);
-        tailCarriage = newNode;
+        carriages.pushBack(new CarriageNode(cNo, type, seats));
     }
 
     // Chèn lịch dừng độ phức tạp O(1)
     void addSchedule(int stID, int arr, int dep, int track) {
-        StopScheduleNode* newNode = new StopScheduleNode(stID, arr, dep, track);
-        if (!headSchedule) {
-            headSchedule = tailSchedule = newNode;
-            return;
-        }
-        tailSchedule->setNextStop(newNode);
-        tailSchedule = newNode;
+        schedule.pushBack(new StopScheduleNode(stID, arr, dep, track));
     }
 
     // Tìm ga dừng liền trước một ga cụ thể trong hành trình của tàu
     StopScheduleNode* findPreviousStop(StopScheduleNode* targetStop) const {
-        if (!headSchedule || headSchedule == targetStop) return nullptr;
-        StopScheduleNode* curr = headSchedule;
-        while (curr && curr->getNextStop() != targetStop) {
-            curr = curr->getNextStop();
+        LinkedList<StopSchedule*>::Node* curr = schedule.getHead();
+        if (!curr || curr->data == targetStop) return nullptr;
+        while (curr && (!curr->next || curr->next->data != targetStop)) {
+            curr = curr->next;
         }
-        return curr;
+        return curr ? curr->data : nullptr;
     }
 
     // Lan truyền dời giờ các ga tiếp theo khi xảy ra trễ
     bool applyDelayPropagation(int fromStationID, int delayMinutes, bool delayArrivalAtFirst = true) {
-        StopScheduleNode* curr = headSchedule;
+        LinkedList<StopSchedule*>::Node* curr = schedule.getHead();
         bool found = false;
 
         while (curr != nullptr) {
-            if (curr->getStationID() == fromStationID) {
+            StopScheduleNode* stop = curr->data;
+            if (stop->getStationID() == fromStationID) {
                 found = true;
                 if (delayArrivalAtFirst) {
-                    curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
+                    stop->setArrivalMinute(stop->getArrivalMinute() + delayMinutes);
                 }
-                curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
+                stop->setDepartureMinute(stop->getDepartureMinute() + delayMinutes);
             } else if (found) {
-                curr->setArrivalMinute(curr->getArrivalMinute() + delayMinutes);
-                curr->setDepartureMinute(curr->getDepartureMinute() + delayMinutes);
+                stop->setArrivalMinute(stop->getArrivalMinute() + delayMinutes);
+                stop->setDepartureMinute(stop->getDepartureMinute() + delayMinutes);
             }
-            curr = curr->getNextStop();
+            curr = curr->next;
         }
         return found;
     }
 
     int getCarriageSeats(int carriageNo) const {
-        CarriageNode* c = headCarriage;
-        while (c) {
-            if (c->getCarriageNo() == carriageNo) return c->getTotalSeats();
-            c = c->getNextCarriage();
+        CarriageNode* carriage = findCarriage(carriageNo);
+        return carriage ? carriage->getTotalSeats() : 0;
+    }
+
+    CarriageNode* findCarriage(int carriageNo) const {
+        LinkedList<Carriage*>::Node* current = carriages.getHead();
+        while (current) {
+            CarriageNode* carriage = current->data;
+            if (carriage->getCarriageNo() == carriageNo) return carriage;
+            current = current->next;
         }
-        return 0;
+        return nullptr;
     }
 };
+
+typedef Train TrainNode;

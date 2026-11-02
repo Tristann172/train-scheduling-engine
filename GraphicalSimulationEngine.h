@@ -8,10 +8,10 @@ class TrainList;
 
 class GraphicalSimulationEngine {
 private:
-    static const int WINDOW_WIDTH = 1280;
-    static const int WINDOW_HEIGHT = 720;
+    static const unsigned int WINDOW_WIDTH = 1360;
+    static const unsigned int WINDOW_HEIGHT = 768;
 
 public:
-    // Khai báo hàm chạy mô phỏng chạy tàu & đường ray 2D bằng SFML
+    // Chạy mô phỏng điều phối chạy tàu & đường ray 2D bằng SFML
     static void runSFMLSimulation(StationList* stationList, TrainList* trainList);
 };

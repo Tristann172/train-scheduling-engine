@@ -88,9 +88,7 @@ void FileManager::loadTrains(const string& filename, TrainList& trainList) {
             string strDir, strPrio;
 
             if (getline(ss, strDir, '|')) {
-                int prio = -1; // -1: TrainNode sẽ tự nhận diện theo tiền tố mã tàu
-                
-                // Đọc cột thứ 3 (nếu file có lưu sẵn độ ưu tiên)
+                int prio = -1;
                 if (getline(ss, strPrio, '|') && !strPrio.empty()) {
                     try {
                         prio = stoi(strPrio);

@@ -54,11 +54,14 @@ namespace {
         }
     };
 
+    // Thêm tham số currentTime = 0 vào cuối
     void pushTrainEvents(MinHeap<ScheduleEvent, ScheduleEventBefore>& events,
-                         TrainNode* train, int& sequence, int safetyHeadway) {
+                        TrainNode* train, int& sequence, int safetyHeadway, int currentTime = 0) {
         LinkedList<StopScheduleNode*>::Node* stopNode = train->getHeadSchedule();
         while (stopNode) {
             StopScheduleNode* stop = stopNode->data;
+            
+            // --- TẠO SỰ KIỆN TẠI GA ---
             ScheduleEvent stationEvent;
             stationEvent.time = stop->getArrivalMinute();
             stationEvent.endTime = stop->getDepartureMinute() + safetyHeadway;
@@ -71,10 +74,13 @@ namespace {
             stationEvent.train = train;
             stationEvent.stop = stop;
             stationEvent.trainCode = train->getTrainCode();
-            if (stationEvent.endTime > stationEvent.time) {
+            
+            // Chỉ nạp nếu sự kiện kết thúc ở TƯƠNG LAI so với currentTime
+            if (stationEvent.endTime > stationEvent.time && stationEvent.endTime > currentTime) {
                 events.push(stationEvent);
             }
 
+            // --- TẠO SỰ KIỆN KHU GIAN ---
             if (stopNode->next) {
                 StopScheduleNode* nextStop = stopNode->next->data;
                 ScheduleEvent blockEvent;
@@ -89,7 +95,9 @@ namespace {
                 blockEvent.stop = stop;
                 blockEvent.nextStop = nextStop;
                 blockEvent.trainCode = train->getTrainCode();
-                if (blockEvent.endTime > blockEvent.time) {
+                
+                // Chỉ nạp nếu sự kiện kết thúc ở TƯƠNG LAI so với currentTime
+                if (blockEvent.endTime > blockEvent.time && blockEvent.endTime > currentTime) {
                     events.push(blockEvent);
                 }
             }
@@ -254,7 +262,7 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
     for (LinkedList<TrainNode*>::Node* trainNode = trains.getHead();
          trainNode; trainNode = trainNode->next) {
         TrainNode* train = trainNode->data;
-        pushTrainEvents(events, train, sequence, SAFETY_HEADWAY);
+        pushTrainEvents(events, train, sequence, SAFETY_HEADWAY, 0);
     }
 
     HashMap<ResourceKey, ScheduleEvent, ResourceKeyHash> activeResources(32);
@@ -313,11 +321,6 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
 
             if (siding != -1) {
                 yielding.stop->setTrackUsed(siding);
-                const int wait = priority.endTime - yielding.time;
-                if (wait > 0 && priority.type == 1) { // Nếu nhường tàu đang qua khu gian
-                    yielding.stop->setDepartureMinute(yielding.stop->getDepartureMinute() + wait);
-                    yieldingTrain->applyDelayPropagation(yielding.stationID, wait, false);
-                }
                 addConflictLog("[Ga " + to_string(yielding.stationID) + "] " +
                             yieldingTrain->getTrainCode() + " vao Ray " + to_string(siding));
                 changed = true;
@@ -332,37 +335,41 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
                     changed = true;
                 }
             }
-        } else { // type == 1 (Khu gian)
-            int wait = priority.endTime - yielding.time;
+        } else { // type == 1 (Xung đột khu gian đường đơn)
+        const int wait = priority.endTime - yielding.time;
+        if (wait > 0) {
             
-            // Xử lý Headway nếu 2 tàu chạy cùng chiều vào cùng ga đích
-            if (yielding.targetStationID == priority.targetStationID) {
-                wait = (priority.stop->getDepartureMinute() + 
-                    (priority.nextStop->getArrivalMinute() - priority.stop->getDepartureMinute()) + 
-                    SAFETY_HEADWAY) - yielding.time;
-            }
-
-            if (wait > 0) {
+            StationNode* waitStation = stationList->findStationByID(yielding.stationID);
+            const int waitTracks = waitStation ? waitStation->getMaxTracks() : 1;
+            const int siding = findAvailableSidingTrack(
+                yielding.stationID, 
+                yielding.stop->getArrivalMinute(),
+                yielding.stop->getDepartureMinute() + wait, // Khung giờ dự kiến đỗ mới
+                waitTracks, 
+                yieldingTrain
+            );
+            if (siding != -1) {
+                yielding.stop->setTrackUsed(siding);
                 yielding.stop->setDepartureMinute(yielding.stop->getDepartureMinute() + wait);
-                
-                StationNode* waitStation = stationList->findStationByID(yielding.stationID);
-                const int waitTracks = waitStation ? waitStation->getMaxTracks() : 1;
-                const int siding = findAvailableSidingTrack(
-                    yielding.stationID, yielding.stop->getArrivalMinute(),
-                    yielding.stop->getDepartureMinute(), waitTracks, yieldingTrain);
-                    
-                if (siding != -1) {
-                    yielding.stop->setTrackUsed(siding);
-                }
-                
                 yieldingTrain->applyDelayPropagation(yielding.targetStationID, wait, true);
-                addConflictLog("[Khu gian " + to_string(yielding.stationID) + "->" +
-                            to_string(yielding.targetStationID) + "] " +
-                            yieldingTrain->getTrainCode() + " cho " +
-                            priorityTrain->getTrainCode() + " +" + to_string(wait) + "p");
-                changed = true;
+            } else {
+                StopScheduleNode* previous = yieldingTrain->findPreviousStop(yielding.stop);
+                if (previous) {
+                    previous->setDepartureMinute(previous->getDepartureMinute() + wait);
+                    yieldingTrain->applyDelayPropagation(yielding.stationID, wait, true);
+                } else {
+                    yielding.stop->setDepartureMinute(yielding.stop->getDepartureMinute() + wait);
+                    yieldingTrain->applyDelayPropagation(yielding.targetStationID, wait, true);
+                }
             }
+            addConflictLog("[Khu gian " + to_string(yielding.stationID) + "->" +
+                        to_string(yielding.targetStationID) + "] " +
+                        yieldingTrain->getTrainCode() + " cho " +
+                        priorityTrain->getTrainCode() + " +" + to_string(wait) + "p" +
+                        (siding != -1 ? " (doi sang Ray " + to_string(siding) + ")" : ""));
+            changed = true;
         }
+    }
 
         if (changed) {
             // Thay thế tàu bị loại ra khỏi tài nguyên nếu cần
@@ -370,7 +377,7 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
                 activeResources.insert(resKey, current);
             }
             yieldingTrain->bumpScheduleRevision();
-            pushTrainEvents(events, yieldingTrain, sequence, SAFETY_HEADWAY);
+            pushTrainEvents(events, yieldingTrain, sequence, SAFETY_HEADWAY, current.time);
         }
     }
 }

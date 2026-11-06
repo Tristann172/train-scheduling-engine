@@ -455,6 +455,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             break;
                         }
                         case 2: {
+                            activeViewMode = 0;
                             string strID, name, strKm, strTracks;
                             if (showInputDialog("THEM GA MOI", "1/4. Nhap ID Ga (VD: 109):", strID, font) &&
                                 showInputDialog("THEM GA MOI", "2/4. Nhap Ten Ga (VD: Hue):", name, font) &&
@@ -470,6 +471,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             break;
                         }
                         case 3: {
+                            activeViewMode = 0;
                             string strID;
                             if (showInputDialog("TIM KIEM GA", "Nhap ID Ga can tra cuu:", strID, font)) {
                                 try {
@@ -610,7 +612,33 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             }
                             break;
                         }
+                        case 15: {
+                            activeViewMode = 0;
+                            string code, strStID, strArr, strDep;
+                            if (showInputDialog("THEM LICH DUNG GA", "1/4. Nhap Ma Tau (VD: SE1):", code, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "2/4. Nhap ID Ga dung (VD: 104):", strStID, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "3/4. Phut den ga trong ngay (VD: 360 cho 06:00):", strArr, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "4/4. Phut roi ga trong ngay (VD: 375 cho 06:15):", strDep, font)) 
+                            {
+                                try {
+                                    if (!trainList.findTrainByCode(code) || !stationList.findStationByID(stoi(strStID))) {
+                                        outputLog = "-> [LOI] Ma tau hoac ID Ga khong ton tai!";
+                                    } else {
+                                        trainList.addStopScheduleToTrain(code, stoi(strStID), stoi(strArr), stoi(strDep), 1);
+                                        trainList.resolveConflictAndScheduleSiding(&stationList);
+                                        FileManager::saveTrains("trains.txt", trainList);
+                                        outputLog = "-> [THANH CONG] Da them lich dung tai Ga " + strStID + " cho tau " + code + " va tu dong kiem tra xung dot!";
+                                    }
+                                } catch (...) { outputLog = "-> [LOI] Du lieu thoi gian phai la so nguyen!"; }
+                            }
+                            break;
+                        }
+                        case 7: {
+                            activeViewMode = 7; // Vẽ Bảng Vé
+                            break;
+                        }
                         case 8: {
+                            activeViewMode = 0;
                             string tID, trCode, strCNo, strSNo, strFrom, strTo;
                             if (showInputDialog("SEGMENT BOOKING", "1/6. Nhap Ma Ve (VD: TCK201):", tID, font) &&
                                 showInputDialog("SEGMENT BOOKING", "2/6. Nhap Ma Tau (VD: SE1):", trCode, font) &&
@@ -652,6 +680,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             break;
                         }
                         case 9: {
+                            activeViewMode = 0;
                             string tID;
                             if (showInputDialog("HUY VE", "Nhap Ma Ve can huy (VD: TCK101):", tID, font)) {
                                 if (ticketList.cancelTicket(tID)) {

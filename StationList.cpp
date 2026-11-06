@@ -1,56 +1,38 @@
 #include "StationList.h"
 
-StationList::StationList() : head(nullptr) {}
+StationList::StationList() : stations(), stationsByID() {}
 
 void StationList::clear() {
-    while (head != nullptr) {
-        StationNode* temp = head;
-        head = head->getNextStation();
-        delete temp;
+    LinkedList<Station*>::Node* station = stations.getHead();
+    while (station) {
+        delete station->data;
+        station = station->next;
     }
-    head = nullptr;
+    stations.clear();
+    stationsByID.clear();
 }
 
 StationList::~StationList() {
     clear();
 }
 
-StationNode* StationList::getHead() const {
-    return head;
+LinkedList<Station*>::Node* StationList::getHead() const {
+    return stations.getHead();
+}
+
+LinkedList<Station*>::Node* StationList::getTail() const {
+    return stations.getTail();
 }
 
 void StationList::addStation(int id, const std::string& name, double km, int tracks) {
     StationNode* newNode = new StationNode(id, name, km, tracks);
-    if (head == nullptr) {
-        head = newNode;
-        return;
+    stations.pushBack(newNode);
+    if (!stationsByID.find(id)) {
+        stationsByID.insert(id, newNode);
     }
-    StationNode* temp = head;
-    while (temp->getNextStation() != nullptr) {
-        temp = temp->getNextStation();
-    }
-    temp->setNextStation(newNode);
 }
 
 StationNode* StationList::findStationByID(int id) const {
-    StationNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getStationID() == id) {
-            return temp;
-        }
-        temp = temp->getNextStation();
-    }
-    return nullptr;
-}
-
-void StationList::displayAll() const {
-    std::cout << "\n=== DANH SACH CAC GA TREN TUYEN ===\n";
-    StationNode* temp = head;
-    while (temp != nullptr) {
-        std::cout << "ID: " << temp->getStationID() 
-                  << " | Ten: " << temp->getName() 
-                  << " | Km: " << temp->getKmMarker() 
-                  << " | So ray phu: " << temp->getNumberOfTracks() << "\n";
-        temp = temp->getNextStation();
-    }
+    StationNode* const* station = stationsByID.find(id);
+    return station ? *station : nullptr;
 }

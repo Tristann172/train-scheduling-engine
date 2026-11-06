@@ -3,180 +3,215 @@
 #include "TrainList.h"
 #include "StationNode.h"
 #include "TrainNode.h"
+#include "StopScheduleNode.h"
+#include "CarriageNode.h"
 #include <iostream>
-#include <algorithm>
 
 using namespace std;
 
-TicketList::TicketList() : head(nullptr) {}
+namespace {
+int findScheduleIndex(TrainNode* train, int stationID) {
+    int index = 0;
+    for (LinkedList<StopScheduleNode*>::Node* stopNode =
+             train ? train->getHeadSchedule() : nullptr;
+         stopNode != nullptr; stopNode = stopNode->next, ++index) {
+        StopScheduleNode* stop = stopNode->data;
+        if (stop->getStationID() == stationID) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+int countScheduleStops(TrainNode* train) {
+    int count = 0;
+    for (LinkedList<StopScheduleNode*>::Node* stop =
+             train ? train->getHeadSchedule() : nullptr;
+         stop != nullptr; stop = stop->next) {
+        ++count;
+    }
+    return count;
+}
+}
+
+TicketList::TicketList()
+    : tickets(), ticketsByID(), occupancyRevision(0),
+      builtOccupancyRevision(~0UL), builtTrainRevision(~0UL),
+      occupancyTrainList(nullptr) {}
 
 TicketList::~TicketList() {
     clear();
 }
 
 void TicketList::clear() {
-    while (head != nullptr) {
-        TicketNode* temp = head;
-        head = head->getNextTicket();
-        delete temp;
+    LinkedList<TicketNode*>::Node* ticket = tickets.getHead();
+    while (ticket) {
+        delete ticket->data;
+        ticket = ticket->next;
     }
-    head = nullptr;
+    tickets.clear();
+    ticketsByID.clear();
+    ++occupancyRevision;
 }
 
+// Chèn vé mới vào cuối danh sách liên kết với độ phức tạp O(1)
 void TicketList::addTicket(const string& ticketID, const string& trainCode, 
                            int carriageNo, int seatNo, int fromID, int toID) {
     TicketNode* newNode = new TicketNode(ticketID, trainCode, carriageNo, seatNo, fromID, toID);
-    if (!head) {
-        head = newNode;
-        return;
+    const bool cacheWasCurrent =
+        builtOccupancyRevision == occupancyRevision && occupancyTrainList &&
+        builtTrainRevision == occupancyTrainList->getStructureRevision();
+    tickets.pushBack(newNode);
+    if (!ticketsByID.find(ticketID)) {
+        ticketsByID.insert(ticketID, newNode);
     }
-    TicketNode* temp = head;
-    while (temp->getNextTicket()) {
-        temp = temp->getNextTicket();
+    ++occupancyRevision;
+    if (cacheWasCurrent) {
+        updateSeatOccupancyForTicket(newNode, -1);
+        builtOccupancyRevision = occupancyRevision;
     }
-    temp->setNextTicket(newNode);
 }
 
 TicketNode* TicketList::findTicketByID(const string& ticketID) const {
-    TicketNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getTicketID() == ticketID) return temp;
-        temp = temp->getNextTicket();
-    }
-    return nullptr;
+    TicketNode* const* ticket = ticketsByID.find(ticketID);
+    return ticket ? *ticket : nullptr;
 }
 
 bool TicketList::cancelTicket(const string& ticketID) {
-    if (!head) return false;
+    TicketNode* const* indexedTicket = ticketsByID.find(ticketID);
+    if (!indexedTicket) return false;
 
-    if (head->getTicketID() == ticketID) {
-        TicketNode* temp = head;
-        head = head->getNextTicket();
-        delete temp;
-        return true;
+    LinkedList<TicketNode*>::Node* target = tickets.getHead();
+    while (target && target->data != *indexedTicket) {
+        target = target->next;
     }
+    if (!target) return false;
 
-    TicketNode* curr = head;
-    while (curr->getNextTicket() && curr->getNextTicket()->getTicketID() != ticketID) {
-        curr = curr->getNextTicket();
+    const bool cacheWasCurrent =
+        builtOccupancyRevision == occupancyRevision && occupancyTrainList &&
+        builtTrainRevision == occupancyTrainList->getStructureRevision();
+    TicketNode* ticket = target->data;
+    if (cacheWasCurrent) updateSeatOccupancyForTicket(ticket, 1);
+    tickets.removeNode(target);
+    delete ticket;
+    ticketsByID.remove(ticketID);
+    for (LinkedList<TicketNode*>::Node* remaining = tickets.getHead();
+         remaining; remaining = remaining->next) {
+        if (remaining->data->getTicketID() == ticketID) {
+            ticketsByID.insert(ticketID, remaining->data);
+            break;
+        }
     }
-
-    if (curr->getNextTicket()) {
-        TicketNode* temp = curr->getNextTicket();
-        curr->setNextTicket(temp->getNextTicket());
-        delete temp;
-        return true;
-    }
-    return false;
+    ++occupancyRevision;
+    if (cacheWasCurrent) builtOccupancyRevision = occupancyRevision;
+    return true;
 }
 
-void TicketList::displayAllTickets() const {
-    cout << "\n=== DANH SACH VE DA DAT ===\n";
-    TicketNode* temp = head;
-    if (!temp) {
-        cout << "(Chua co ve nao trong he thong)\n";
+void TicketList::updateSeatOccupancyForTicket(const TicketNode* ticket,
+                                               int delta) const {
+    if (!ticket || !occupancyTrainList) return;
+    TrainNode* train = occupancyTrainList->findTrainByCode(ticket->getTrainCode());
+    if (!train) return;
+
+    const int fromIndex = findScheduleIndex(train, ticket->getFromStationID());
+    const int toIndex = findScheduleIndex(train, ticket->getToStationID());
+    CarriageNode* carriage = train->findCarriage(ticket->getCarriageNo());
+    if (carriage && fromIndex >= 0 && toIndex > fromIndex &&
+        ticket->getSeatNo() >= 1 && ticket->getSeatNo() <= carriage->getTotalSeats()) {
+        carriage->updateSeatSegments(ticket->getSeatNo(), fromIndex,
+                                     toIndex - 1, delta);
+    }
+}
+
+void TicketList::ensureSeatOccupancy(TrainList* trainList) const {
+    if (!trainList ||
+        (builtOccupancyRevision == occupancyRevision && occupancyTrainList == trainList &&
+         builtTrainRevision == trainList->getStructureRevision())) {
         return;
     }
-    while (temp != nullptr) {
-        cout << "Ma Ve: " << temp->getTicketID()
-             << " | Tau: " << temp->getTrainCode()
-             << " | Toa: " << temp->getCarriageNo()
-             << " | Ghe: " << temp->getSeatNo()
-             << " | Chang: Ga " << temp->getFromStationID() 
-             << " -> Ga " << temp->getToStationID() << "\n";
-        temp = temp->getNextTicket();
+
+    // Reset each seat's route tree once, then replay tickets in one pass.
+    for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
+         trainNode; trainNode = trainNode->next) {
+        TrainNode* train = trainNode->data;
+        const int segmentCount = countScheduleStops(train) - 1;
+        for (LinkedList<CarriageNode*>::Node* carriageNode =
+                 train->getHeadCarriage(); carriageNode;
+             carriageNode = carriageNode->next) {
+            CarriageNode* carriage = carriageNode->data;
+            carriage->configureSeatSegments(segmentCount);
+        }
     }
+
+    for (LinkedList<TicketNode*>::Node* ticketNode = tickets.getHead();
+         ticketNode; ticketNode = ticketNode->next) {
+        TicketNode* ticket = ticketNode->data;
+        TrainNode* train = trainList->findTrainByCode(ticket->getTrainCode());
+        if (!train) continue;
+
+        const int fromIndex = findScheduleIndex(train, ticket->getFromStationID());
+        const int toIndex = findScheduleIndex(train, ticket->getToStationID());
+        CarriageNode* carriage = train->findCarriage(ticket->getCarriageNo());
+        if (carriage && fromIndex >= 0 && toIndex > fromIndex &&
+            ticket->getSeatNo() >= 1 && ticket->getSeatNo() <= carriage->getTotalSeats()) {
+            carriage->updateSeatSegments(ticket->getSeatNo(), fromIndex, toIndex - 1, -1);
+        }
+    }
+
+    occupancyTrainList = trainList;
+    builtOccupancyRevision = occupancyRevision;
+    builtTrainRevision = trainList->getStructureRevision();
 }
 
-// ==================== SEGMENT BOOKING (KIỂM TRA GIAO THOA KM) ====================
-bool TicketList::isSeatAvailable(StationList* stationList, const string& trainCode, 
-                                int carriageNo, int seatNo, int newFromID, int newToID) const 
+bool TicketList::checkCarriageSeats(StationList* stationList, TrainList* trainList,
+                                    const string& trainCode, int carriageNo,
+                                    int newFromID, int newToID,
+                                    bool seatFreeOut[], int maxSeats) const 
 {
-    if (!stationList) return false;
+    if (!stationList || !trainList || !seatFreeOut ||
+        newFromID == newToID || maxSeats <= 0) return false;
 
     StationNode* stNewFrom = stationList->findStationByID(newFromID);
-    StationNode* stNewTo = stationList->findStationByID(newToID);
+    StationNode* stNewTo   = stationList->findStationByID(newToID);
     if (!stNewFrom || !stNewTo) return false;
 
-    double newKmStart = min(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
-    double newKmEnd = max(stNewFrom->getKmMarker(), stNewTo->getKmMarker());
+    TrainNode* train = trainList->findTrainByCode(trainCode);
+    if (!train) return false;
 
-    TicketNode* curr = head;
-    while (curr != nullptr) {
-        if (curr->getTrainCode() == trainCode &&
-            curr->getCarriageNo() == carriageNo &&
-            curr->getSeatNo() == seatNo) 
-        {
-            StationNode* stExistFrom = stationList->findStationByID(curr->getFromStationID());
-            StationNode* stExistTo = stationList->findStationByID(curr->getToStationID());
+    const int fromIndex = findScheduleIndex(train, newFromID);
+    const int toIndex = findScheduleIndex(train, newToID);
+    CarriageNode* carriage = train->findCarriage(carriageNo);
+    if (!carriage || fromIndex < 0 || toIndex <= fromIndex ||
+        maxSeats > carriage->getTotalSeats()) return false;
 
-            if (stExistFrom && stExistTo) {
-                double existKmStart = min(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-                double existKmEnd = max(stExistFrom->getKmMarker(), stExistTo->getKmMarker());
-
-                // Hai đoạn [A1, B1] và [A2, B2] giao thoa khi: max(A1, A2) < min(B1, B2)
-                double overlapStart = max(newKmStart, existKmStart);
-                double overlapEnd = min(newKmEnd, existKmEnd);
-
-                if (overlapStart < overlapEnd) {
-                    return false; // Đã bị chiếm trong đoạn này
-                }
-            }
-        }
-        curr = curr->getNextTicket();
+    ensureSeatOccupancy(trainList);
+    for (int seat = 1; seat <= maxSeats; ++seat) {
+        seatFreeOut[seat] =
+            carriage->isSeatAvailableOnSegments(seat, fromIndex, toIndex - 1);
     }
-    return true; // Ghế còn trống
+
+    return true;
 }
 
-void TicketList::displaySeatMap(StationList* stationList, const string& trainCode,
-                                int carriageNo, int totalSeats, int fromID, int toID) const 
+// ==================== KIỂM TRA ĐƠN LẺ KHI ĐẶT VÉ (SEGMENT BOOKING) ====================
+bool TicketList::isSeatAvailable(StationList* stationList, TrainList* trainList, const string& trainCode, 
+                                 int carriageNo, int seatNo, int newFromID, int newToID) const 
 {
-    cout << "\n--- SO DO GHE TOA " << carriageNo << " (TAU " << trainCode << ") ---";
-    cout << "\n[Chang: Ga " << fromID << " -> Ga " << toID << "]\n";
+    if (!stationList || !trainList || newFromID == newToID) return false;
 
-    for (int i = 1; i <= totalSeats; ++i) {
-        bool free = isSeatAvailable(stationList, trainCode, carriageNo, i, fromID, toID);
-        if (free) {
-            cout << "[" << i << ": O] "; // O = Trống
-        } else {
-            cout << "[" << i << ": X] "; // X = Đã đặt
-        }
-        if (i % 4 == 0) cout << "\n";
-    }
-    cout << "\n(Ghi chu: O = Con trong, X = Da duoc dat)\n";
-}
+    StationNode* stNewFrom = stationList->findStationByID(newFromID);
+    StationNode* stNewTo   = stationList->findStationByID(newToID);
+    if (!stNewFrom || !stNewTo) return false;
 
-void TicketList::bookTicketUI(StationList* stationList, TrainList* trainList) {
-    string tID, trCode;
-    int cNo, sNo, fromID, toID;
+    TrainNode* train = trainList->findTrainByCode(trainCode);
+    if (!train) return false;
 
-    cout << "\n=== CHUONG TRINH DAT VE MOI (SEGMENT BOOKING) ===\n";
-    cout << "Nhap Ma Ve: "; cin >> tID;
-    cout << "Nhap Ma Tau: "; cin >> trCode;
-    cout << "Nhap So Toa: "; cin >> cNo;
-    cout << "Nhap ID Ga Di: "; cin >> fromID;
-    cout << "Nhap ID Ga Den: "; cin >> toID;
+    const int fromIndex = findScheduleIndex(train, newFromID);
+    const int toIndex = findScheduleIndex(train, newToID);
+    CarriageNode* carriage = train->findCarriage(carriageNo);
+    if (!carriage || seatNo <= 0 || seatNo > carriage->getTotalSeats() ||
+        fromIndex < 0 || toIndex <= fromIndex) return false;
 
-    TrainNode* train = trainList->findTrainByCode(trCode);
-    if (!train) {
-        cout << "-> [LOI] Khong tim thay tau " << trCode << "\n";
-        return;
-    }
-
-    int totalSeats = train->getCarriageSeats(cNo);
-    if (totalSeats == 0) {
-        cout << "-> [LOI] Khong tim thay toa " << cNo << " tren tau " << trCode << "\n";
-        return;
-    }
-
-    displaySeatMap(stationList, trCode, cNo, totalSeats, fromID, toID);
-
-    cout << "Nhap So Ghe muon dat: "; cin >> sNo;
-
-    if (isSeatAvailable(stationList, trCode, cNo, sNo, fromID, toID)) {
-        addTicket(tID, trCode, cNo, sNo, fromID, toID);
-        cout << "-> [THANH CONG] Dat ve " << tID << " thanh cong!\n";
-    } else {
-        cout << "-> [THAT BAI] Ghe so " << sNo << " da co nguoi dat trong chang nay!\n";
-    }
+    ensureSeatOccupancy(trainList);
+    return carriage->isSeatAvailableOnSegments(seatNo, fromIndex, toIndex - 1);
 }

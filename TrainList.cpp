@@ -1,145 +1,472 @@
-#include "TrainList.h"
+#include "TrainList.h" 
 #include "StationList.h"
 #include "StopScheduleNode.h"
 #include "StationNode.h"
-#include <iostream>
-#include <algorithm>
+#include "MinHeap.h"
+#include <iomanip>
+#include <sstream>
 
 using namespace std;
 
-TrainList::TrainList() : head(nullptr) {}
+namespace {
+string formatTimeHHMM(int totalMinutes) {
+    int hour = (totalMinutes / 60) % 24;
+    int minute = totalMinutes % 60;
+    stringstream stream;
+    stream << setfill('0') << setw(2) << hour << ":"
+           << setfill('0') << setw(2) << minute;
+    return stream.str();
+}
+
+struct ScheduleEvent {
+    int time;
+    int endTime;
+    int type; // 0: ga/ray, 1: khu gian
+    int stationID;
+    int targetStationID;
+    int track;
+    int sequence;
+    unsigned long trainRevision;
+    TrainNode* train;
+    StopScheduleNode* stop;
+    StopScheduleNode* nextStop;
+    string trainCode;
+
+    ScheduleEvent()
+        : time(0), endTime(0), type(0), stationID(0), targetStationID(0),
+          track(0), sequence(0), trainRevision(0), train(nullptr),
+          stop(nullptr), nextStop(nullptr) {}
+};
+
+bool isCurrentEvent(const ScheduleEvent& event) {
+    return event.train &&
+           event.trainRevision == event.train->getScheduleRevision();
+}
+
+struct ScheduleEventBefore {
+    bool operator()(const ScheduleEvent& left, const ScheduleEvent& right) const {
+        if (left.time != right.time) return left.time < right.time;
+        if (left.train->getPriority() != right.train->getPriority()) {
+            return left.train->getPriority() < right.train->getPriority();
+        }
+        return left.sequence < right.sequence;
+    }
+};
+
+void pushTrainEvents(MinHeap<ScheduleEvent, ScheduleEventBefore>& events,
+                     TrainNode* train, int& sequence, int safetyHeadway) {
+    LinkedList<StopScheduleNode*>::Node* stopNode = train->getHeadSchedule();
+    while (stopNode) {
+        StopScheduleNode* stop = stopNode->data;
+        ScheduleEvent stationEvent;
+        stationEvent.time = stop->getArrivalMinute();
+        stationEvent.endTime = stop->getDepartureMinute() + safetyHeadway;
+        stationEvent.type = 0;
+        stationEvent.stationID = stop->getStationID();
+        stationEvent.targetStationID = stop->getStationID();
+        stationEvent.track = stop->getTrackUsed();
+        stationEvent.sequence = sequence++;
+        stationEvent.trainRevision = train->getScheduleRevision();
+        stationEvent.train = train;
+        stationEvent.stop = stop;
+        stationEvent.trainCode = train->getTrainCode();
+        if (stationEvent.endTime > stationEvent.time) {
+            events.push(stationEvent);
+        }
+
+        if (stopNode->next) {
+            StopScheduleNode* nextStop = stopNode->next->data;
+            ScheduleEvent blockEvent;
+            blockEvent.time = stop->getDepartureMinute();
+            blockEvent.endTime = nextStop->getArrivalMinute() + safetyHeadway;
+            blockEvent.type = 1;
+            blockEvent.stationID = stop->getStationID();
+            blockEvent.targetStationID = nextStop->getStationID();
+            blockEvent.sequence = sequence++;
+            blockEvent.trainRevision = train->getScheduleRevision();
+            blockEvent.train = train;
+            blockEvent.stop = stop;
+            blockEvent.nextStop = nextStop;
+            blockEvent.trainCode = train->getTrainCode();
+            if (blockEvent.endTime > blockEvent.time) {
+                events.push(blockEvent);
+            }
+        }
+        stopNode = stopNode->next;
+    }
+}
+
+bool sameResource(const ScheduleEvent& left, const ScheduleEvent& right) {
+    if (left.type != right.type) return false;
+    if (left.type == 0) {
+        return left.stationID == right.stationID && left.track == right.track;
+    }
+    return (left.stationID == right.stationID &&
+            left.targetStationID == right.targetStationID) ||
+           (left.stationID == right.targetStationID &&
+            left.targetStationID == right.stationID);
+}
+
+struct ResourceSlot {
+    ScheduleEvent event;
+    int state; // 0: empty, 1: occupied, 2: deleted
+
+    ResourceSlot() : state(0) {}
+};
+
+int resourceHash(const ScheduleEvent& event, int capacity) {
+    int firstStation = event.stationID;
+    int secondStation = event.targetStationID;
+    if (event.type == 1 && firstStation > secondStation) {
+        const int temp = firstStation;
+        firstStation = secondStation;
+        secondStation = temp;
+    }
+
+    unsigned long hash = static_cast<unsigned long>(event.type + 1);
+    hash = hash * 16777619UL + static_cast<unsigned long>(firstStation);
+    hash = hash * 16777619UL + static_cast<unsigned long>(secondStation);
+    hash = hash * 16777619UL + static_cast<unsigned long>(event.track);
+    return static_cast<int>(hash % static_cast<unsigned long>(capacity));
+}
+
+int findResourceSlot(ResourceSlot* slots, int capacity,
+                     const ScheduleEvent& event, bool& found) {
+    int index = resourceHash(event, capacity);
+    int firstDeleted = -1;
+    found = false;
+
+    for (int probes = 0; probes < capacity; ++probes) {
+        if (slots[index].state == 0) {
+            return firstDeleted >= 0 ? firstDeleted : index;
+        }
+        if (slots[index].state == 2) {
+            if (firstDeleted < 0) firstDeleted = index;
+        } else if (sameResource(slots[index].event, event)) {
+            found = true;
+            return index;
+        }
+        index = (index + 1) % capacity;
+    }
+    return firstDeleted;
+}
+
+void growResourceTable(ResourceSlot*& slots, int& capacity, int& activeCount) {
+    const int newCapacity = capacity * 2;
+    ResourceSlot* expanded = new ResourceSlot[newCapacity];
+    int retainedCount = 0;
+    for (int i = 0; i < capacity; ++i) {
+        if (slots[i].state != 1 || !isCurrentEvent(slots[i].event)) {
+            continue;
+        }
+        const int start = resourceHash(slots[i].event, newCapacity);
+        int index = start;
+        while (expanded[index].state == 1) {
+            index = (index + 1) % newCapacity;
+        }
+        expanded[index] = slots[i];
+        ++retainedCount;
+    }
+    delete[] slots;
+    slots = expanded;
+    capacity = newCapacity;
+    activeCount = retainedCount;
+}
+}
+
+TrainList::TrainList()
+    : trains(), trainsByCode(), structureRevision(0), logStart(0), logCount(0) {}
 
 TrainList::~TrainList() {
     clear();
 }
 
 void TrainList::clear() {
-    while (head != nullptr) {
-        TrainNode* temp = head;
-        head = head->getNextTrain();
-        delete temp;
+    LinkedList<TrainNode*>::Node* train = trains.getHead();
+    while (train) {
+        delete train->data;
+        train = train->next;
     }
-    head = nullptr;
+    trains.clear();
+    trainsByCode.clear();
+    ++structureRevision;
 }
 
-TrainNode* TrainList::getHead() const {
-    return head;
+LinkedList<TrainNode*>::Node* TrainList::getHead() const {
+    return trains.getHead();
 }
 
-void TrainList::addTrain(const string& code, int direction) {
-    TrainNode* newNode = new TrainNode(code, direction);
-    if (!head) {
-        head = newNode;
-        return;
+void TrainList::addTrain(const string& code, int direction, int priority) {
+    TrainNode* newNode = new TrainNode(code, direction, priority);
+    trains.pushBack(newNode);
+    if (!trainsByCode.find(code)) {
+        trainsByCode.insert(code, newNode);
     }
-    TrainNode* temp = head;
-    while (temp->getNextTrain() != nullptr) {
-        temp = temp->getNextTrain();
-    }
-    temp->setNextTrain(newNode);
+    ++structureRevision;
 }
 
 TrainNode* TrainList::findTrainByCode(const string& code) const {
-    TrainNode* temp = head;
-    while (temp != nullptr) {
-        if (temp->getTrainCode() == code) return temp;
-        temp = temp->getNextTrain();
-    }
-    return nullptr;
+    TrainNode* const* train = trainsByCode.find(code);
+    return train ? *train : nullptr;
 }
 
-void TrainList::addCarriageToTrain(const string& code, int cNo, const string& type, int seats) {
+void TrainList::addCarriageToTrain(const string& code, int carriageNo,
+                                   const string& type, int seats) {
     TrainNode* train = findTrainByCode(code);
     if (train) {
-        train->addCarriage(cNo, type, seats);
+        train->addCarriage(carriageNo, type, seats);
+        ++structureRevision;
     }
 }
 
-void TrainList::addStopScheduleToTrain(const string& code, int stID, int arr, int dep, int track) {
+void TrainList::addStopScheduleToTrain(const string& code, int stationID,
+                                       int arrival, int departure, int track) {
     TrainNode* train = findTrainByCode(code);
     if (train) {
-        train->addSchedule(stID, arr, dep, track);
+        train->addSchedule(stationID, arrival, departure, track);
+        ++structureRevision;
     }
 }
 
-void TrainList::displayAllTrains() const {
-    cout << "\n=== DANH SACH CAC CHUYEN TAU ===\n";
-    TrainNode* temp = head;
-    while (temp != nullptr) {
-        cout << "Ma Tau: " << temp->getTrainCode() 
-             << " | Huong Chay: " << (temp->getDirection() == 1 ? "Nam (Di vao)" : "Bac (Di ra)") << "\n";
-        temp = temp->getNextTrain();
+void TrainList::addConflictLog(const string& logMessage) {
+    if (logCount < MAX_LOGS) {
+        const int insertIndex = (logStart + logCount) % MAX_LOGS;
+        conflictLogs[insertIndex] = logMessage;
+        ++logCount;
+    } else {
+        conflictLogs[logStart] = logMessage;
+        logStart = (logStart + 1) % MAX_LOGS;
     }
 }
 
-// ==================== THUẬT TOÁN TÁI LẬP LỊCH TRÁNH TÀU (MEET & PASS / SIDING) ====================
-// Thuật toán kiểm tra và xử lý xung đột cả tại Ga và trên Khu gian ray đơn
-void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
-    for (TrainNode* t1 = head; t1 != nullptr; t1 = t1->getNextTrain()) {
-        for (TrainNode* t2 = t1->getNextTrain(); t2 != nullptr; t2 = t2->getNextTrain()) {
-            
-            StopScheduleNode* s1 = t1->getHeadSchedule();
-            while (s1 != nullptr && s1->getNextStop() != nullptr) {
-                StopScheduleNode* nextS1 = s1->getNextStop();
+string TrainList::getLog(int index) const {
+    if (index < 0 || index >= logCount) return "";
+    return conflictLogs[(logStart + index) % MAX_LOGS];
+}
 
-                StopScheduleNode* s2 = t2->getHeadSchedule();
-                while (s2 != nullptr && s2->getNextStop() != nullptr) {
-                    StopScheduleNode* nextS2 = s2->getNextStop();
+int TrainList::findAvailableSidingTrack(int stationID, int arrival, int departure,
+                                        int maxTracks, TrainNode* excludeTrain) const {
+    if (maxTracks <= 1) return -1;
 
-                    // TRƯỜNG HỢP 1: Xung đột đỗ cùng Ga cùng thời điểm
-                    if (s1->getStationID() == s2->getStationID()) {
-                        int startOverlap = std::max(s1->getArrivalMinute(), s2->getArrivalMinute());
-                        int endOverlap = std::min(s1->getDepartureMinute(), s2->getDepartureMinute());
+    const int HEADWAY = 10;
+    for (int candidateTrack = 2; candidateTrack <= maxTracks; ++candidateTrack) {
+        bool occupied = false;
+        for (LinkedList<TrainNode*>::Node* trainNode = trains.getHead();
+             trainNode && !occupied; trainNode = trainNode->next) {
+            TrainNode* train = trainNode->data;
+            if (train == excludeTrain) continue;
 
-                        if (startOverlap < endOverlap && s1->getTrackUsed() == 1 && s2->getTrackUsed() == 1) {
-                            s2->setTrackUsed(2); // Chuyển sang ray phụ 2
-                        }
-                    }
+            for (LinkedList<StopScheduleNode*>::Node* stopNode =
+                     train->getHeadSchedule(); stopNode; stopNode = stopNode->next) {
+                StopScheduleNode* stop = stopNode->data;
+                if (stop->getStationID() != stationID ||
+                    stop->getTrackUsed() != candidateTrack) continue;
 
-                    // TRƯỜNG HỢP 2: Xung đột đối đầu trên Khu gian ray đơn (Ví dụ Vinh - Đồng Hới)
-                    // T1 đi từ Ga A -> Ga B, T2 đi từ Ga B -> Ga A
-                    if (s1->getStationID() == nextS2->getStationID() && nextS1->getStationID() == s2->getStationID()) {
-                        int t1_start = s1->getDepartureMinute();
-                        int t1_end = nextS1->getArrivalMinute();
-
-                        int t2_start = s2->getDepartureMinute();
-                        int t2_end = nextS2->getArrivalMinute();
-
-                        // Phát hiện khoảng thời gian 2 tàu cùng chạy trên khu gian
-                        int trackOverlapStart = std::max(t1_start, t2_start);
-                        int trackOverlapEnd = std::min(t1_end, t2_end);
-
-                        if (trackOverlapStart < trackOverlapEnd) {
-                            // Tái lập lịch: Bắt Tàu 2 đỗ chờ tại Ga S2 ở Ray phụ 2 cho đến khi Tàu 1 chạy xong khu gian
-                            int extraWaitTime = t1_end - t2_start + 10; // Chờ T1 đến nơi + 10 phút an toàn
-                            
-                            s2->setDepartureMinute(s2->getDepartureMinute() + extraWaitTime);
-                            s2->setTrackUsed(2); // Đỗ ray phụ chờ nhường đường
-                            
-                            // Dời giờ các ga phía sau của Tàu 2
-                            t2->applyDelayPropagation(s2->getStationID(), extraWaitTime);
-                        }
-                    }
-
-                    s2 = s2->getNextStop();
+                const int overlapStart = arrival > stop->getArrivalMinute()
+                    ? arrival : stop->getArrivalMinute();
+                const int stopEnd = stop->getDepartureMinute() + HEADWAY;
+                const int requestedEnd = departure + HEADWAY;
+                const int overlapEnd = requestedEnd < stopEnd
+                    ? requestedEnd : stopEnd;
+                if (overlapStart < overlapEnd) {
+                    occupied = true;
+                    break;
                 }
-                s1 = s1->getNextStop();
             }
         }
+        if (!occupied) return candidateTrack;
     }
+    return -1;
 }
 
-// ==================== THUẬT TOÁN DELAY PROPAGATION TRỌN GÓI ====================
-bool TrainList::applyDelayAndReschedule(const string& trainCode, int fromStationID, int delayMinutes, StationList* stationList) {
+void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
+    if (!stationList) return;
+
+    const int SAFETY_HEADWAY = 10;
+    MinHeap<ScheduleEvent, ScheduleEventBefore> events;
+    int sequence = 0;
+    for (LinkedList<TrainNode*>::Node* trainNode = trains.getHead();
+         trainNode; trainNode = trainNode->next) {
+        TrainNode* train = trainNode->data;
+        pushTrainEvents(events, train, sequence, SAFETY_HEADWAY);
+    }
+
+    int resourceCapacity = 8;
+    ResourceSlot* activeResources = new ResourceSlot[resourceCapacity];
+    int activeResourceCount = 0;
+
+    while (!events.isEmpty()) {
+        const ScheduleEvent current = events.top();
+        events.pop();
+        if (!isCurrentEvent(current)) {
+            continue;
+        }
+
+        bool resourceFound = false;
+        const int resourceIndex = findResourceSlot(activeResources,
+                                                   resourceCapacity,
+                                                   current, resourceFound);
+        if (resourceIndex < 0) {
+            delete[] activeResources;
+            addConflictLog("[Loi] Khong the cap phat o trang thai tai nguyen lich tau.");
+            return;
+        }
+
+        if (resourceFound &&
+            (!isCurrentEvent(activeResources[resourceIndex].event) ||
+             activeResources[resourceIndex].event.endTime <= current.time)) {
+            activeResources[resourceIndex].state = 2;
+            --activeResourceCount;
+            resourceFound = false;
+        }
+
+        if (!resourceFound) {
+            if ((activeResourceCount + 1) * 4 > resourceCapacity * 3) {
+                growResourceTable(activeResources, resourceCapacity,
+                                  activeResourceCount);
+                const int expandedIndex = findResourceSlot(
+                    activeResources, resourceCapacity, current, resourceFound);
+                if (expandedIndex < 0) {
+                    delete[] activeResources;
+                    addConflictLog("[Loi] Khong the cap phat o trang thai tai nguyen lich tau.");
+                    return;
+                }
+                if (resourceFound) {
+                    activeResources[expandedIndex].event = current;
+                    activeResources[expandedIndex].state = 1;
+                    continue;
+                }
+                if (activeResources[expandedIndex].state == 0) {
+                    ++activeResourceCount;
+                }
+                activeResources[expandedIndex].event = current;
+                activeResources[expandedIndex].state = 1;
+                continue;
+            }
+            if (activeResources[resourceIndex].state == 0) {
+                ++activeResourceCount;
+            }
+            activeResources[resourceIndex].event = current;
+            activeResources[resourceIndex].state = 1;
+            continue;
+        }
+
+        const ScheduleEvent other = activeResources[resourceIndex].event;
+        if (other.train == current.train) {
+            if (current.endTime > activeResources[resourceIndex].event.endTime) {
+                activeResources[resourceIndex].event.endTime = current.endTime;
+            }
+            continue;
+        }
+
+        const bool currentYields =
+            current.train->getPriority() != other.train->getPriority()
+                ? current.train->getPriority() > other.train->getPriority()
+                : (current.time != other.time
+                       ? current.time > other.time
+                       : current.sequence > other.sequence);
+        const ScheduleEvent& yielding = currentYields ? current : other;
+        const ScheduleEvent& priority = currentYields ? other : current;
+        TrainNode* yieldingTrain = yielding.train;
+        TrainNode* priorityTrain = priority.train;
+        bool changed = false;
+
+        if (yielding.type == 0) {
+            StationNode* station =
+                stationList->findStationByID(yielding.stationID);
+            const int trackCount = station ? station->getMaxTracks() : 1;
+            const int siding = findAvailableSidingTrack(
+                yielding.stationID, yielding.stop->getArrivalMinute(),
+                yielding.stop->getDepartureMinute(), trackCount, yieldingTrain);
+
+            if (siding != -1) {
+                yielding.stop->setTrackUsed(siding);
+                addConflictLog("[Ga " + to_string(yielding.stationID) + "] " +
+                               yieldingTrain->getTrainCode() + " (P" +
+                               to_string(yieldingTrain->getPriority()) +
+                               ") vao Ray " + to_string(siding) + " nhuong " +
+                               priorityTrain->getTrainCode());
+                changed = true;
+            } else {
+                const int wait = priority.endTime - yielding.time;
+                if (wait <= 0) {
+                    continue;
+                }
+
+                StopScheduleNode* previous =
+                    yieldingTrain->findPreviousStop(yielding.stop);
+                if (previous) {
+                    previous->setDepartureMinute(previous->getDepartureMinute() + wait);
+                    StationNode* previousStation =
+                        stationList->findStationByID(previous->getStationID());
+                    const int previousTracks =
+                        previousStation ? previousStation->getMaxTracks() : 1;
+                    const int previousSiding = findAvailableSidingTrack(
+                        previous->getStationID(), previous->getArrivalMinute(),
+                        previous->getDepartureMinute(), previousTracks, yieldingTrain);
+                    if (previousSiding != -1) {
+                        previous->setTrackUsed(previousSiding);
+                    }
+                }
+
+                yieldingTrain->applyDelayPropagation(yielding.stationID, wait, true);
+                addConflictLog("[Ga " + to_string(yielding.stationID) + "] Giu " +
+                               yieldingTrain->getTrainCode() + " tai ga truoc +" +
+                               to_string(wait) + "p nhuong " +
+                               priorityTrain->getTrainCode());
+                changed = true;
+            }
+        } else {
+            const int wait = priority.endTime - yielding.time;
+            if (wait <= 0) {
+                continue;
+            }
+
+            yielding.stop->setDepartureMinute(yielding.stop->getDepartureMinute() + wait);
+            StationNode* waitStation =
+                stationList->findStationByID(yielding.stationID);
+            const int waitTracks = waitStation ? waitStation->getMaxTracks() : 1;
+            const int siding = findAvailableSidingTrack(
+                yielding.stationID, yielding.stop->getArrivalMinute(),
+                yielding.stop->getDepartureMinute(), waitTracks, yieldingTrain);
+            if (siding != -1) {
+                yielding.stop->setTrackUsed(siding);
+            }
+            yieldingTrain->applyDelayPropagation(yielding.targetStationID, wait, true);
+            addConflictLog("[Khu gian " + to_string(yielding.stationID) + "->" +
+                           to_string(yielding.targetStationID) + "] " +
+                           yieldingTrain->getTrainCode() + " (P" +
+                           to_string(yieldingTrain->getPriority()) + ") cho " +
+                           priorityTrain->getTrainCode() + " +" + to_string(wait) +
+                           "p (Xuat phat: " +
+                           formatTimeHHMM(yielding.stop->getDepartureMinute()) + ")");
+            changed = true;
+        }
+
+        if (changed) {
+            if (!currentYields) {
+                activeResources[resourceIndex].event = current;
+                activeResources[resourceIndex].state = 1;
+            }
+            yieldingTrain->bumpScheduleRevision();
+            pushTrainEvents(events, yieldingTrain, sequence, SAFETY_HEADWAY);
+        }
+    }
+    delete[] activeResources;
+}
+
+bool TrainList::applyDelayAndReschedule(const string& trainCode, int fromStationID,
+                                        int delayMinutes, StationList* stationList) {
     TrainNode* train = findTrainByCode(trainCode);
     if (!train) return false;
 
-    // BƯỚC 1: Dời giờ đến/đi cho tất cả các ga tiếp theo của tàu bị sự cố
-    bool ok = train->applyDelayPropagation(fromStationID, delayMinutes);
-    
-    // BƯỚC 2: Tự động tái lập lịch tránh tàu ngay sau khi mốc thời gian bị thay đổi
-    if (ok) {
+    addConflictLog("[Su co] Tau " + trainCode + " bi tre +" +
+                   to_string(delayMinutes) + "p tu Ga " +
+                   to_string(fromStationID));
+    const bool delayed =
+        train->applyDelayPropagation(fromStationID, delayMinutes, true);
+    if (delayed) {
         resolveConflictAndScheduleSiding(stationList);
     }
-    return ok;
+    return delayed;
 }

@@ -25,11 +25,15 @@ LinkedList<Station*>::Node* StationList::getTail() const {
 }
 
 void StationList::addStation(int id, const std::string& name, double km, int tracks) {
-    StationNode* newNode = new StationNode(id, name, km, tracks);
-    stations.pushBack(newNode);
-    if (!stationsByID.find(id)) {
-        stationsByID.insert(id, newNode);
+    if (stationsByID.find(id)) {
+        std::cerr << "Loi: Station ID " << id << " da ton tai!\n";
+        return; 
     }
+
+    StationNode* newNode = new StationNode(id, name, km, tracks);
+
+    stations.pushBack(newNode);
+    stationsByID.insert(id, newNode);
 }
 
 StationNode* StationList::findStationByID(int id) const {

@@ -5,7 +5,6 @@
 
 class StationList;
 class TrainList;
-class TicketList;
 
 // Bảng màu đồng bộ với GraphicalSimulationEngine (Dracula Dark Mode)
 namespace GuiTheme {
@@ -115,7 +114,7 @@ struct GuiButton {
 
 // Cấu trúc Nhóm Menu dùng mảng tĩnh (Không dùng std::vector)
 struct MenuGroup {
-    static const int MAX_SUB_BTNS = 8;
+    static const int MAX_SUB_BTNS = 10;
     GuiButton mainCategoryBtn;
     GuiButton subButtons[MAX_SUB_BTNS];
     int subCount;
@@ -139,8 +138,7 @@ struct MenuGroup {
 
 class GuiMenu {
 public:
-    static void runGUIMenu(StationList& stationList, TrainList& trainList, TicketList& ticketList);
+    static void runGUIMenu(StationList& stationList, TrainList& trainList);
     static bool showInputDialog(const std::string& title, const std::string& promptLabel, std::string& outputValue, sf::Font& font);
-    static void showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font, std::string& outputLog);
     static void applyDelayUI(StationList& stationList, TrainList& trainList, sf::Font& font, std::string& outputLog);
 };

@@ -17,7 +17,9 @@ public:
     LinkedList<Station*>::Node* getHead() const;
     LinkedList<Station*>::Node* getTail() const;
     int getSize() const { return stations.getSize(); }
-    void addStation(int id, const std::string& name, double km, int tracks);
+    bool addStation(int id, const std::string& name, double km, int tracks);
     StationNode* findStationByID(int id) const;
+    bool updateStation(int id, const std::string& name, double km, int tracks);
+    bool removeStation(int id);
     void clear();
 };

@@ -1,7 +1,6 @@
 #include "GuiMenu.h"
 #include "StationList.h"
 #include "TrainList.h"
-#include "TicketList.h"
 #include "FileManager.h"
 #include "GraphicalSimulationEngine.h"
 
@@ -9,14 +8,26 @@
 #include "TrainNode.h"
 #include "CarriageNode.h"
 #include "StopScheduleNode.h"
-#include "TicketNode.h"
 
 #include <iostream>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <cctype>
+#include <fstream>
 
 using namespace std;
+
+// Hiển thị phút tuyệt đối theo ngày, không làm mất thông tin lịch nhiều ngày.
+static string formatScheduleMinute(int totalMinutes) {
+    const int day = totalMinutes / 1440;
+    const int minuteOfDay = totalMinutes % 1440;
+    stringstream formatted;
+    if (day > 0) formatted << "D+" << day << " ";
+    formatted << setfill('0') << setw(2) << minuteOfDay / 60 << ":"
+              << setfill('0') << setw(2) << minuteOfDay % 60;
+    return formatted.str();
+}
 
 // ==================== 1. HỘP THOẠI NHẬP LIỆU HIỆN ĐẠI (MODAL INPUT DIALOG) ====================
 bool GuiMenu::showInputDialog(const string& title, const string& promptLabel, string& outputValue, sf::Font& font) {
@@ -118,7 +129,7 @@ bool GuiMenu::showInputDialog(const string& title, const string& promptLabel, st
 // ==================== 2. HÀM RENDER ĐỒ HỌA BẢNG DỮ LIỆU (CUSTOM TABLE RENDERERS) ====================
 
 // --- 2.1. VẼ BẢNG DANH SÁCH NHÀ GA (ACTION ID: 1) ---
-void renderStationTable(sf::RenderWindow& window, sf::Font& font, const StationList& stationList, float startY) {
+void renderStationTable(sf::RenderWindow& window, sf::Font& font, const StationList& stationList, float startY, const string& filter) {
     const float tableX = 410.0f;
     const float colWidths[] = { 80.0f, 150.0f, 130.0f, 170.0f, 385.0f };
     const float rowHeight = 32.0f;
@@ -145,6 +156,7 @@ void renderStationTable(sf::RenderWindow& window, sf::Font& font, const StationL
 
     for (LinkedList<StationNode*>::Node* node = stationList.getHead(); node != nullptr; node = node->next) {
         StationNode* st = node->data;
+        if (!filter.empty() && to_string(st->getStationID()).find(filter) == string::npos) continue;
         currentX = tableX;
         sf::Color rowBg = (rowIndex % 2 == 0) ? sf::Color(28, 32, 46) : sf::Color(36, 41, 58);
 
@@ -189,7 +201,7 @@ void renderStationTable(sf::RenderWindow& window, sf::Font& font, const StationL
 }
 
 // --- 2.2. VẼ BẢNG DANH SÁCH ĐOÀN TÀU (ACTION ID: 4) ---
-void renderTrainTable(sf::RenderWindow& window, sf::Font& font, const TrainList& trainList, float startY) {
+void renderTrainTable(sf::RenderWindow& window, sf::Font& font, const TrainList& trainList, float startY, const string& filter) {
     const float tableX = 410.0f;
     const float colWidths[] = { 120.0f, 260.0f, 180.0f, 355.0f };
     const float rowHeight = 36.0f;
@@ -216,6 +228,7 @@ void renderTrainTable(sf::RenderWindow& window, sf::Font& font, const TrainList&
 
     for (LinkedList<TrainNode*>::Node* node = trainList.getHead(); node != nullptr; node = node->next) {
         TrainNode* tr = node->data;
+        if (!filter.empty() && tr->getTrainCode().find(filter) == string::npos) continue;
         currentX = tableX;
         sf::Color rowBg = (rowIndex % 2 == 0) ? sf::Color(28, 32, 46) : sf::Color(36, 41, 58);
 
@@ -249,13 +262,24 @@ void renderTrainTable(sf::RenderWindow& window, sf::Font& font, const TrainList&
 }
 
 // --- 2.3. VẼ THẺ TOA XE & BẢNG LỊCH TRÌNH DỪNG GA (ACTION ID: 5) ---
-void renderTrainDetailsPanel(sf::RenderWindow& window, sf::Font& font, const TrainList& trainList, const StationList& stationList, float startY) {
+void renderTrainDetailsPanel(sf::RenderWindow& window, sf::Font& font, const TrainList& trainList, const StationList& stationList, float startY, const string& filter) {
     float currentY = startY;
     const float panelX = 410.0f;
     const float panelWidth = 915.0f;
 
     for (LinkedList<TrainNode*>::Node* trainNode = trainList.getHead(); trainNode != nullptr; trainNode = trainNode->next) {
         TrainNode* tr = trainNode->data;
+        if (!filter.empty()) {
+            bool matchesStation = false;
+            for (LinkedList<StopScheduleNode*>::Node* stop = tr->getHeadSchedule();
+                 stop; stop = stop->next) {
+                if (to_string(stop->data->getStationID()).find(filter) != string::npos) {
+                    matchesStation = true;
+                    break;
+                }
+            }
+            if (!matchesStation) continue;
+        }
 
         // 1. Thẻ tiêu đề Tàu
         sf::RectangleShape trainCard(sf::Vector2f(panelWidth, 40.0f));
@@ -290,7 +314,7 @@ void renderTrainDetailsPanel(sf::RenderWindow& window, sf::Font& font, const Tra
             coachBox.setOutlineColor(GuiTheme::Border);
             window.draw(coachBox);
 
-            string cStr = "Toa " + to_string(c->getCarriageNo()) + ": " + c->getType() + " (" + to_string(c->getTotalSeats()) + "g)";
+            string cStr = "Toa " + to_string(c->getCarriageNo()) + ": " + c->getType();
             sf::Text cTxt(font, cStr, 10);
             cTxt.setFillColor(GuiTheme::TextLight);
             cTxt.setPosition(sf::Vector2f(coachX + 6.0f, currentY + 7.0f));
@@ -323,19 +347,20 @@ void renderTrainDetailsPanel(sf::RenderWindow& window, sf::Font& font, const Tra
 
         for (LinkedList<StopScheduleNode*>::Node* sNode = tr->getHeadSchedule(); sNode != nullptr; sNode = sNode->next) {
             StopScheduleNode* s = sNode->data;
+            if (!filter.empty() &&
+                to_string(s->getStationID()).find(filter) == string::npos) continue;
             StationNode* st = stationList.findStationByID(s->getStationID());
             subX = panelX;
-
-            char arrBuf[10], depBuf[10];
-            snprintf(arrBuf, sizeof(arrBuf), "%02d:%02d", s->getArrivalMinute() / 60, s->getArrivalMinute() % 60);
-            snprintf(depBuf, sizeof(depBuf), "%02d:%02d", s->getDepartureMinute() / 60, s->getDepartureMinute() % 60);
 
             string rowVal[5] = {
                 to_string(s->getStationID()),
                 st ? st->getName() : "Ga " + to_string(s->getStationID()),
-                string(arrBuf),
-                string(depBuf),
-                (s->getTrackUsed() > 1) ? "Ray " + to_string(s->getTrackUsed()) + " (Ray phu tranh tau)" : "Ray 1 (Ray chinh)"
+                formatScheduleMinute(s->getArrivalMinute()),
+                formatScheduleMinute(s->getDepartureMinute()),
+                (s->getTrackUsed() > 1)
+                    ? "Ray " + to_string(s->getTrackUsed()) +
+                      (sNode->next == nullptr ? " (ray phu dau cuoi)" : " (ray phu)")
+                    : "Ray 1 (Ray chinh)"
             };
 
             for (int i = 0; i < 5; ++i) {
@@ -357,233 +382,6 @@ void renderTrainDetailsPanel(sf::RenderWindow& window, sf::Font& font, const Tra
             currentY += 25.0f;
         }
         currentY += 20.0f;
-    }
-}
-
-// --- 2.4. VẼ BẢNG DANH SÁCH VÉ ĐÃ PHÁT HÀNH (ACTION ID: 7) ---
-void renderTicketTable(sf::RenderWindow& window, sf::Font& font, const TicketList& ticketList, const StationList& stationList, float startY) {
-    const float tableX = 410.0f;
-    const float colWidths[] = { 130.0f, 100.0f, 80.0f, 80.0f, 525.0f };
-    const float rowHeight = 32.0f;
-    const string headers[] = { "MA VE", "TAU", "TOA", "GHE", "HANH TRINH HANH KHACH" };
-
-    float currentX = tableX;
-    for (int i = 0; i < 5; ++i) {
-        sf::RectangleShape headerBox(sf::Vector2f(colWidths[i] - 2.0f, rowHeight));
-        headerBox.setPosition(sf::Vector2f(currentX, startY));
-        headerBox.setFillColor(GuiTheme::CardBg);
-        headerBox.setOutlineThickness(1.0f);
-        headerBox.setOutlineColor(GuiTheme::Border);
-        window.draw(headerBox);
-
-        sf::Text txt(font, headers[i], 12);
-        txt.setFillColor(GuiTheme::AccentGold);
-        txt.setPosition(sf::Vector2f(currentX + 10.0f, startY + 8.0f));
-        window.draw(txt);
-        currentX += colWidths[i];
-    }
-
-    float currentY = startY + rowHeight + 4.0f;
-    int rowIndex = 0;
-
-    for (LinkedList<TicketNode*>::Node* node = ticketList.getHead(); node != nullptr; node = node->next) {
-        TicketNode* tk = node->data;
-        currentX = tableX;
-        sf::Color rowBg = (rowIndex % 2 == 0) ? sf::Color(28, 32, 46) : sf::Color(36, 41, 58);
-
-        StationNode* stFrom = stationList.findStationByID(tk->getFromStationID());
-        StationNode* stTo = stationList.findStationByID(tk->getToStationID());
-        string fromName = stFrom ? stFrom->getName() : to_string(tk->getFromStationID());
-        string toName = stTo ? stTo->getName() : to_string(tk->getToStationID());
-
-        string cellData[5];
-        cellData[0] = tk->getTicketID();
-        cellData[1] = tk->getTrainCode();
-        cellData[2] = "Toa " + to_string(tk->getCarriageNo());
-        cellData[3] = "Ghe " + to_string(tk->getSeatNo());
-        cellData[4] = fromName + " (ID:" + to_string(tk->getFromStationID()) + ") -> " +
-                      toName + " (ID:" + to_string(tk->getToStationID()) + ")";
-
-        for (int c = 0; c < 5; ++c) {
-            sf::RectangleShape cellBox(sf::Vector2f(colWidths[c] - 2.0f, rowHeight - 2.0f));
-            cellBox.setPosition(sf::Vector2f(currentX, currentY));
-            cellBox.setFillColor(rowBg);
-            cellBox.setOutlineThickness(1.0f);
-            cellBox.setOutlineColor(GuiTheme::Border);
-            window.draw(cellBox);
-
-            sf::Text cellTxt(font, cellData[c], 12);
-            if (c == 0) cellTxt.setFillColor(GuiTheme::AccentGold);
-            else if (c == 1) cellTxt.setFillColor(GuiTheme::AccentCyan);
-            else cellTxt.setFillColor(GuiTheme::TextLight);
-
-            cellTxt.setPosition(sf::Vector2f(currentX + 10.0f, currentY + 7.0f));
-            window.draw(cellTxt);
-            currentX += colWidths[c];
-        }
-        currentY += rowHeight;
-        rowIndex++;
-    }
-}
-
-// ==================== 3. SƠ ĐỒ GHẾ 2D TƯƠNG TÁC (CLICK ĐỂ ĐẶT VÉ TRỰC TIẾP) ====================
-void GuiMenu::showSeatMapUI(StationList& stationList, TrainList& trainList, TicketList& ticketList, sf::Font& font, string& outputLog) {
-    string trainCode, strCarriage, strFrom, strTo;
-    if (!showInputDialog("SEAT MAP 2D", "1/4. Nhap Ma Tau (Vi du: SE1):", trainCode, font) ||
-        !showInputDialog("SEAT MAP 2D", "2/4. Nhap So Toa (Vi du: 1):", strCarriage, font) ||
-        !showInputDialog("SEAT MAP 2D", "3/4. Nhap ID Ga Di (Vi du: 101):", strFrom, font) ||
-        !showInputDialog("SEAT MAP 2D", "4/4. Nhap ID Ga Den (Vi du: 105):", strTo, font)) return;
-
-    int carriageNo = 0, fromSt = 0, toSt = 0;
-    try {
-        carriageNo = stoi(strCarriage);
-        fromSt = stoi(strFrom);
-        toSt = stoi(strTo);
-    } catch (...) {
-        outputLog = "-> [LOI NHAP LIEU] So toa va ID ga phai la so nguyen hop le!";
-        return;
-    }
-
-    TrainNode* train = trainList.findTrainByCode(trainCode);
-    if (!train) {
-        outputLog = "-> [LOI TRA CUU] Khong tim thay doan tau co ma: " + trainCode;
-        return;
-    }
-
-    int totalSeats = train->getCarriageSeats(carriageNo);
-    if (totalSeats <= 0 || totalSeats > 128) {
-        outputLog = "-> [LOI TOA XE] Toa so " + to_string(carriageNo) + " khong ton tai tren tau " + trainCode + "!";
-        return;
-    }
-
-    bool seatFree[129];
-    if (!ticketList.checkCarriageSeats(&stationList, &trainList, trainCode, carriageNo, fromSt, toSt, seatFree, totalSeats)) {
-        outputLog = "-> [LOI HANH TRINH] Tau " + trainCode + " KHONG phuc vu chang Ga " + to_string(fromSt) +
-                    " -> Ga " + to_string(toSt) + "\n   (Nguyen nhan: Nhap nguoc chieu chay cua tau hoac tau khong dung tai ga nay).";
-        return;
-    }
-
-    StationNode* stFromNode = stationList.findStationByID(fromSt);
-    StationNode* stToNode   = stationList.findStationByID(toSt);
-    string routeDesc = (stFromNode ? stFromNode->getName() : to_string(fromSt)) + " -> " +
-                       (stToNode ? stToNode->getName() : to_string(toSt));
-
-    sf::RenderWindow mapWin(sf::VideoMode({880, 520}), "PBL2: SO DO GHE NGOI TUONG TAC (INTERACTIVE SEAT MAP 2D)", sf::Style::Titlebar | sf::Style::Close);
-    mapWin.setFramerateLimit(60);
-
-    string statusBanner = "MEO: Click chuot trai truc tiep vao o GHE XANH de dat ve nhanh cho ghe do!";
-
-    while (mapWin.isOpen()) {
-        sf::Vector2i mousePos = sf::Mouse::getPosition(mapWin);
-        bool mouseClicked = false;
-
-        while (const auto event = mapWin.pollEvent()) {
-            if (event->is<sf::Event::Closed>()) mapWin.close();
-            if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
-                if (mouseBtn->button == sf::Mouse::Button::Left) mouseClicked = true;
-            }
-        }
-
-        mapWin.clear(GuiTheme::BgMain);
-
-        sf::Text header(font, "SO DO GHE TOA " + to_string(carriageNo) + " | TAU " + trainCode +
-                        " (P" + to_string(train->getPriority()) + ") | CHANG: " + routeDesc, 16);
-        header.setFillColor(GuiTheme::AccentGold);
-        header.setPosition(sf::Vector2f(35.0f, 20.0f));
-        mapWin.draw(header);
-
-        int freeCount = 0;
-        for (int i = 1; i <= totalSeats; ++i) if (seatFree[i]) freeCount++;
-
-        sf::Text subHeader(font, "Tong so ghe: " + to_string(totalSeats) +
-                           "  |  Con trong (Xanh): " + to_string(freeCount) +
-                           "  |  Da dat (Do): " + to_string(totalSeats - freeCount), 13);
-        subHeader.setFillColor(GuiTheme::AccentCyan);
-        subHeader.setPosition(sf::Vector2f(35.0f, 48.0f));
-        mapWin.draw(subHeader);
-
-        sf::RectangleShape carriageHull(sf::Vector2f(810.0f, 330.0f));
-        carriageHull.setPosition(sf::Vector2f(35.0f, 85.0f));
-        carriageHull.setFillColor(GuiTheme::PanelBg);
-        carriageHull.setOutlineThickness(2.0f);
-        carriageHull.setOutlineColor(GuiTheme::Border);
-        mapWin.draw(carriageHull);
-
-        sf::RectangleShape aisle(sf::Vector2f(790.0f, 26.0f));
-        aisle.setPosition(sf::Vector2f(45.0f, 237.0f));
-        aisle.setFillColor(GuiTheme::BgMain);
-        mapWin.draw(aisle);
-
-        sf::Text aisleText(font, "--- LOI DI GIUA TOA TAU (AISLE) ---", 11);
-        aisleText.setFillColor(GuiTheme::TextMuted);
-        aisleText.setPosition(sf::Vector2f(330.0f, 243.0f));
-        mapWin.draw(aisleText);
-
-        int hoveredSeat = -1;
-        for (int i = 1; i <= totalSeats; ++i) {
-            int row = (i - 1) % 4;
-            int col = (i - 1) / 4;
-            float x = 55.0f + col * 48.0f;
-            float y = 105.0f + row * 62.0f + (row >= 2 ? 32.0f : 0.0f);
-
-            sf::RectangleShape seatBox(sf::Vector2f(40.0f, 46.0f));
-            seatBox.setPosition(sf::Vector2f(x, y));
-
-            bool available = seatFree[i];
-            bool isHover = seatBox.getGlobalBounds().contains(sf::Vector2f(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y)));
-            if (isHover) hoveredSeat = i;
-
-            seatBox.setFillColor(available ? sf::Color(39, 174, 96) : sf::Color(192, 57, 43));
-            seatBox.setOutlineThickness(isHover ? 2.5f : 1.0f);
-            seatBox.setOutlineColor(isHover ? GuiTheme::AccentGold : sf::Color(20, 20, 25));
-            mapWin.draw(seatBox);
-
-            sf::RectangleShape headrest(sf::Vector2f(8.0f, 34.0f));
-            headrest.setPosition(sf::Vector2f(x + 30.0f, y + 6.0f));
-            headrest.setFillColor(available ? sf::Color(46, 204, 113) : sf::Color(231, 76, 60));
-            mapWin.draw(headrest);
-
-            sf::Text seatNum(font, to_string(i), 12);
-            seatNum.setFillColor(sf::Color::White);
-            seatNum.setPosition(sf::Vector2f(x + 8.0f, y + 14.0f));
-            mapWin.draw(seatNum);
-
-            if (isHover && mouseClicked && available) {
-                string newTicketID;
-                if (showInputDialog("DAT VE NHANH TREN SO DO GHE",
-                                    "Nhap Ma Ve moi cho Ghe so " + to_string(i) + " (VD: TCK305):",
-                                    newTicketID, font)) 
-                {
-                    if (ticketList.findTicketByID(newTicketID) != nullptr) {
-                        statusBanner = "[LOI] Ma ve " + newTicketID + " da ton tai trong he thong!";
-                    } else if (ticketList.isSeatAvailable(&stationList, &trainList, trainCode, carriageNo, i, fromSt, toSt)) {
-                        ticketList.addTicket(newTicketID, trainCode, carriageNo, i, fromSt, toSt);
-                        FileManager::saveTickets("tickets.txt", ticketList);
-                        seatFree[i] = false;
-                        statusBanner = "[THANH CONG] Da phat hanh ve " + newTicketID + " cho Ghe " + to_string(i) + "!";
-                        outputLog = "-> [SEAT MAP BOOKING] Da dat ve " + newTicketID + " (Tau " + trainCode +
-                                    ", Toa " + to_string(carriageNo) + ", Ghe " + to_string(i) + ")";
-                    }
-                }
-            }
-        }
-
-        sf::RectangleShape footerBox(sf::Vector2f(810.0f, 45.0f));
-        footerBox.setPosition(sf::Vector2f(35.0f, 435.0f));
-        footerBox.setFillColor(GuiTheme::CardBg);
-        footerBox.setOutlineThickness(1.0f);
-        footerBox.setOutlineColor(GuiTheme::Border);
-        mapWin.draw(footerBox);
-
-        string hoverInfo = (hoveredSeat != -1)
-            ? ("Dang chon Ghe so " + to_string(hoveredSeat) + ": " + (seatFree[hoveredSeat] ? "CON TRONG (Click de dat)" : "DA CO KHACH DAT"))
-            : statusBanner;
-        sf::Text footerTxt(font, hoverInfo, 13);
-        footerTxt.setFillColor(GuiTheme::AccentGold);
-        footerTxt.setPosition(sf::Vector2f(50.0f, 448.0f));
-        mapWin.draw(footerTxt);
-
-        mapWin.display();
     }
 }
 
@@ -615,8 +413,110 @@ void GuiMenu::applyDelayUI(StationList& stationList, TrainList& trainList, sf::F
     }
 }
 
+// Ghi thao tác bảo trì vào lịch sử lệnh để trạng thái được giữ sau khi khởi động lại.
+static bool changeMaintenanceUI(bool opening, StationList& stationList, TrainList& trainList,
+                                sf::Font& font, string& outputLog) {
+    string resource, firstText, secondText, startText, endText;
+    if (!GuiMenu::showInputDialog(opening ? "MO TAI NGUYEN" : "DONG TAI NGUYEN",
+                                  "Loai tai nguyen (STATION, BLOCK, TRACK):",
+                                  resource, font)) return false;
+    transform(resource.begin(), resource.end(), resource.begin(),
+              [](unsigned char ch) { return static_cast<char>(toupper(ch)); });
+    if (resource != "STATION" && resource != "BLOCK" && resource != "TRACK") {
+        outputLog = "-> [TU CHOI] Loai tai nguyen phai la STATION, BLOCK hoac TRACK.";
+        return false;
+    }
+
+    if (!GuiMenu::showInputDialog("BAO TRI", "ID ga (hoac ga dau cua khu gian):",
+                                  firstText, font)) return false;
+    const bool isStation = resource == "STATION";
+    if (!isStation && !GuiMenu::showInputDialog("BAO TRI",
+            resource == "BLOCK" ? "ID ga ke tiep cua khu gian:" : "So ray tai ga:",
+            secondText, font)) return false;
+    if (!GuiMenu::showInputDialog("BAO TRI", "Phut bat dau (so phut tu moc ngay 0):",
+                                  startText, font) ||
+        !GuiMenu::showInputDialog("BAO TRI", "Phut ket thuc:", endText, font)) return false;
+
+    try {
+        size_t used = 0;
+        const int first = stoi(firstText, &used);
+        if (used != firstText.size()) throw invalid_argument("station");
+        const int second = isStation ? 0 : stoi(secondText, &used);
+        if (!isStation && used != secondText.size()) throw invalid_argument("resource");
+        const int start = stoi(startText, &used);
+        if (used != startText.size()) throw invalid_argument("start");
+        const int end = stoi(endText, &used);
+        if (used != endText.size()) throw invalid_argument("end");
+
+        StationNode* firstStation = stationList.findStationByID(first);
+        StationNode* secondStation = resource == "BLOCK"
+            ? stationList.findStationByID(second) : nullptr;
+        bool validResource = firstStation != nullptr;
+        if (resource == "BLOCK") {
+            validResource = validResource && secondStation && first != second &&
+                firstStation->getKmMarker() != secondStation->getKmMarker();
+            if (validResource) {
+                const double lowKm = min(firstStation->getKmMarker(), secondStation->getKmMarker());
+                const double highKm = max(firstStation->getKmMarker(), secondStation->getKmMarker());
+                for (LinkedList<StationNode*>::Node* station = stationList.getHead();
+                     station; station = station->next) {
+                    if (station->data->getKmMarker() > lowKm &&
+                        station->data->getKmMarker() < highKm) validResource = false;
+                }
+            }
+        } else if (resource == "TRACK") {
+            validResource = validResource && second >= 1 &&
+                            second <= firstStation->getMaxTracks();
+        }
+        if (!validResource || start < 0 || end <= start) {
+            outputLog = "-> [TU CHOI] Tai nguyen khong ton tai/khong hop le hoac khoang thoi gian sai.";
+            return false;
+        }
+
+        const bool changed = opening
+            ? trainList.removeMaintenance(resource, first, second, start, end)
+            : trainList.addMaintenance(resource, first, second, start, end);
+        if (!changed) {
+            outputLog = "-> [TU CHOI] Khong tim thay cua so bao tri can mo.";
+            return false;
+        }
+
+        trainList.resolveConflictAndScheduleSiding(&stationList);
+        if (!FileManager::saveTrains("trains.txt", trainList)) {
+            if (opening) trainList.addMaintenance(resource, first, second, start, end);
+            else trainList.removeMaintenance(resource, first, second, start, end);
+            trainList.resolveConflictAndScheduleSiding(&stationList);
+            outputLog = "-> [LOI] Khong ghi duoc trains.txt; da khoi phuc trang thai bao tri.";
+            return false;
+        }
+
+        const string operation = opening ? "OPEN_" : "CLOSE_";
+        const string line = operation + resource + "|" + to_string(first) +
+            (isStation ? "" : "|" + to_string(second)) + "|" +
+            to_string(start) + "|" + to_string(end);
+        ofstream commands("commands.txt", ios::app);
+        if (commands) commands << line << '\n';
+        commands.flush();
+        if (!commands) {
+            if (opening) trainList.addMaintenance(resource, first, second, start, end);
+            else trainList.removeMaintenance(resource, first, second, start, end);
+            trainList.resolveConflictAndScheduleSiding(&stationList);
+            FileManager::saveTrains("trains.txt", trainList);
+            outputLog = "-> [LOI] Khong ghi duoc commands.txt; da khoi phuc trang thai bao tri.";
+            return false;
+        }
+        outputLog = opening
+            ? "-> [THANH CONG] Da mo tai nguyen va cap nhat lai dieu phoi."
+            : "-> [THANH CONG] Da dong tai nguyen, cap nhat dieu phoi va luu commands.txt.";
+        return true;
+    } catch (const exception&) {
+        outputLog = "-> [LOI] ID va thoi gian phai la so nguyen hop le.";
+        return false;
+    }
+}
+
 // ==================== 5. MAIN DASHBOARD CONTROL CENTER ====================
-void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketList& ticketList) {
+void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList) {
     sf::RenderWindow window(sf::VideoMode({1360, 768}), "PBL2: TRUNG TAM DIEU HANH & QUAN LY DUONG SAT DON (CONTROL CENTER)");
     window.setFramerateLimit(60);
 
@@ -646,21 +546,22 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
     menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.3. Them Doan tau moi (kem Priority)", font, 6);
     menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.4. Gan Toa xe moi vao Doan tau", font, 14);
     menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.5. Them Diem dung (Stop Schedule) cho Tau", font, 15);
-    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.6. Bao cao Tre gio & Tai lap lich (Delay)", font, 11);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.6. Bai bo chuyen tau", font, 19);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.7. Bai bo diem dung", font, 20);
+    menuGroups[1].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "2.8. Dieu chinh lich dung tai ga", font, 22);
 
-    // 3. Nhóm Quản lý Vé & Sơ đồ ghế 2D
-    menuGroups[2].initGroup(startX, 0, btnW, mainH, "[3] QUAN LY VE & SEAT MAP 2D", font, 300);
-    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.1. Danh sach Ve da phat hanh", font, 7);
-    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.2. Dat ve theo phan doan (Segment Booking)", font, 8);
-    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.3. Tra cuu Ve theo Ma Ve (Find by ID)", font, 16);
-    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.4. Huy ve da phat hanh (Cancel Ticket)", font, 9);
-    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.5. Mo So do ghe 2D (Click de dat ve)", font, 10);
+    // 3. Nhóm đóng/mở tài nguyên khi bảo trì và báo cáo sự cố.
+    menuGroups[2].initGroup(startX, 0, btnW, mainH, "[3] BAO TRI & SU CO", font, 300);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.1. Dong tai nguyen do bao tri", font, 23);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.2. Mo tai nguyen sau bao tri", font, 24);
+    menuGroups[2].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "3.3. Bao cao su co tre gio (Delay)", font, 11);
 
-    // 4. Nhóm Điều phối Xung đột & Mô phỏng Đồ họa
-    menuGroups[3].initGroup(startX, 0, btnW, mainH, "[4] DIEU PHOI XUNG DOT & MO PHONG 2D", font, 400);
+    // 4. Nhóm Điều phối Xung đột & Mô phỏng Đồ họa.
+    menuGroups[3].initGroup(startX, 0, btnW, mainH, "[4] DIEU PHOI & MO PHONG 2D", font, 400);
     menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.1. Chay Mo phong Do hoa SFML 2D Engine", font, 12);
     menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.2. Quet Xung dot & Phan luong Ray phu ngay", font, 17);
     menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.3. Nap lai du lieu goc tu File Text", font, 13);
+    menuGroups[3].addSubButton(startX + 15.0f, 0, btnW - 15.0f, subH, "4.4. Ap dung lenh quan ly tu commands.txt", font, 18);
 
     // 5. Thoát
     menuGroups[4].initGroup(startX, 0, btnW, mainH, "[0] LUU DU LIEU & THOAT HE THONG", font, 0);
@@ -675,6 +576,8 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
 
     float scrollOffsetY = 0.0f;
     int activeViewMode = 1; // Mặc định mở Bảng Ga khi khởi động
+    string stationSearch, trainSearch, stopStationSearch;
+    int searchFocus = 0;
 
     while (window.isOpen()) {
         sf::Vector2i mousePos = sf::Mouse::getPosition(window);
@@ -695,6 +598,29 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                     scrollOffsetY += 28.0f;
                     if (scrollOffsetY > 0.0f) scrollOffsetY = 0.0f;
                 }
+            }
+            if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
+                string* target = searchFocus == 1 ? &stationSearch :
+                    (searchFocus == 2 ? &trainSearch :
+                     (searchFocus == 3 ? &stopStationSearch : nullptr));
+                if (target) {
+                    if (textEntered->unicode == 8) {
+                        if (!target->empty()) target->pop_back();
+                    } else if (target->size() < 32 &&
+                               textEntered->unicode >= 32 && textEntered->unicode <= 126) {
+                        target->push_back(static_cast<char>(textEntered->unicode));
+                    }
+                }
+            }
+        }
+        if (mouseClicked) {
+            const sf::FloatRect searchBounds({1055.0f, 112.0f}, {265.0f, 28.0f});
+            const sf::Vector2f pointer(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y));
+            if (searchBounds.contains(pointer)) {
+                searchFocus = activeViewMode == 1 ? 1 :
+                    (activeViewMode == 4 ? 2 : (activeViewMode == 5 ? 3 : 0));
+            } else {
+                searchFocus = 0;
             }
         }
 
@@ -729,6 +655,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                     menuGroups[g].isExpanded = willExpand;
                     menuGroups[g].mainCategoryBtn.setSelected(willExpand);
                 }
+                continue;
             }
 
             if (menuGroups[g].isExpanded) {
@@ -744,6 +671,19 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             activeViewMode = 1; // Vẽ Bảng Nhà Ga
                             break;
                         }
+                        case 18: {
+                            activeViewMode = 0;
+                            string commandLog;
+                            if (FileManager::processInputCommands("commands.txt", stationList,
+                                    trainList, commandLog)) {
+                                FileManager::saveStations("stations.txt", stationList);
+                                FileManager::saveTrains("trains.txt", trainList);
+                                outputLog = "=== KET QUA LENH commands.txt ===\n\n" + commandLog;
+                            } else {
+                                outputLog = "-> [LOI] " + commandLog;
+                            }
+                            break;
+                        }
                         case 2: {
                             activeViewMode = 0;
                             string strID, name, strKm, strTracks;
@@ -753,9 +693,10 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                                 showInputDialog("THEM GA MOI", "4/4. Nhap Tong so Ray maxTracks (1 = Ga xep, >=2 = Co ray phu):", strTracks, font)) 
                             {
                                 try {
-                                    stationList.addStation(stoi(strID), name, stod(strKm), stoi(strTracks));
-                                    FileManager::saveStations("stations.txt", stationList);
-                                    outputLog = "-> [THANH CONG] Da them Ga " + name + " (maxTracks = " + strTracks + ") va luu file!";
+                                    if (stationList.addStation(stoi(strID), name, stod(strKm), stoi(strTracks))) {
+                                        FileManager::saveStations("stations.txt", stationList);
+                                        outputLog = "-> [THANH CONG] Da them Ga " + name + " (maxTracks = " + strTracks + ") va luu file!";
+                                    } else outputLog = "-> [TU CHOI] ID, ten, moc km, so ray khong hop le hoac ID da ton tai.";
                                 } catch (...) { outputLog = "-> [LOI] Du lieu nhap vao khong hop le!"; }
                             }
                             break;
@@ -795,32 +736,33 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             {
                                 try {
                                     int prio = stoi(strPrio);
-                                    trainList.addTrain(code, stoi(strDir), prio <= 0 ? -1 : prio);
-                                    FileManager::saveTrains("trains.txt", trainList);
-                                    TrainNode* added = trainList.findTrainByCode(code);
-                                    outputLog = "-> [THANH CONG] Da them Tau " + code + " voi Cap uu tien P" +
-                                                to_string(added ? added->getPriority() : 1) + "!";
+                                    if (trainList.addTrain(code, stoi(strDir), prio <= 0 ? -1 : prio)) {
+                                        FileManager::saveTrains("trains.txt", trainList);
+                                        TrainNode* added = trainList.findTrainByCode(code);
+                                        outputLog = "-> [THANH CONG] Da them Tau " + code + " voi Cap uu tien P" +
+                                                    to_string(added ? added->getPriority() : 1) + "!";
+                                    } else outputLog = "-> [TU CHOI] Ma tau da ton tai hoac huong chay khong hop le.";
                                 } catch (...) { outputLog = "-> [LOI] Du lieu nhap vao khong hop le!"; }
                             }
                             break;
                         }
                         case 14: {
                             activeViewMode = 0;
-                            string code, strCNo, type, strSeats;
-                            if (showInputDialog("GAN TOA XE VAO TAU", "1/4. Nhap Ma Tau (VD: SE1):", code, font) &&
-                                showInputDialog("GAN TOA XE VAO TAU", "2/4. Nhap So thu tu Toa (VD: 3):", strCNo, font) &&
-                                showInputDialog("GAN TOA XE VAO TAU", "3/4. Loai Toa (VD: NgoiMem, GiuongNam):", type, font) &&
-                                showInputDialog("GAN TOA XE VAO TAU", "4/4. Tong so ghe (VD: 48):", strSeats, font)) 
+                            string code, strCNo, type;
+                            if (showInputDialog("GAN TOA XE VAO TAU", "1/3. Nhap Ma Tau (VD: SE1):", code, font) &&
+                                showInputDialog("GAN TOA XE VAO TAU", "2/3. Nhap So thu tu Toa (VD: 3):", strCNo, font) &&
+                                showInputDialog("GAN TOA XE VAO TAU", "3/3. Loai Toa (VD: NgoiMem, GiuongNam):", type, font))
                             {
                                 try {
                                     if (!trainList.findTrainByCode(code)) {
                                         outputLog = "-> [LOI] Khong tim thay doan tau " + code + "!";
                                     } else {
-                                        trainList.addCarriageToTrain(code, stoi(strCNo), type, stoi(strSeats));
-                                        FileManager::saveTrains("trains.txt", trainList);
-                                        outputLog = "-> [THANH CONG] Da gan Toa so " + strCNo + " (" + type + ", " + strSeats + " ghe) vao tau " + code + "!";
+                                        if (trainList.addCarriageToTrain(code, stoi(strCNo), type)) {
+                                            FileManager::saveTrains("trains.txt", trainList);
+                                            outputLog = "-> [THANH CONG] Da gan Toa so " + strCNo + " (" + type + ") vao tau " + code + "!";
+                                        } else outputLog = "-> [TU CHOI] So toa, loai toa khong hop le hoac so toa da ton tai.";
                                     }
-                                } catch (...) { outputLog = "-> [LOI] So toa va so ghe phai la so nguyen!"; }
+                                } catch (...) { outputLog = "-> [LOI] So toa phai la so nguyen!"; }
                             }
                             break;
                         }
@@ -829,15 +771,14 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             string code, strStID, strArr, strDep;
                             if (showInputDialog("THEM LICH DUNG GA", "1/4. Nhap Ma Tau (VD: SE1):", code, font) &&
                                 showInputDialog("THEM LICH DUNG GA", "2/4. Nhap ID Ga dung (VD: 104):", strStID, font) &&
-                                showInputDialog("THEM LICH DUNG GA", "3/4. Phut den ga trong ngay (VD: 360 cho 06:00):", strArr, font) &&
-                                showInputDialog("THEM LICH DUNG GA", "4/4. Phut roi ga trong ngay (VD: 375 cho 06:15):", strDep, font)) 
+                                showInputDialog("THEM LICH DUNG GA", "3/4. Phut tu moc ngay 0 (1500 = D+1 01:00):", strArr, font) &&
+                                showInputDialog("THEM LICH DUNG GA", "4/4. Phut roi ga tu moc ngay 0:", strDep, font))
                             {
                                 try {
-                                    if (!trainList.findTrainByCode(code) || !stationList.findStationByID(stoi(strStID))) {
-                                        outputLog = "-> [LOI] Ma tau hoac ID Ga khong ton tai!";
+                                    if (!trainList.addStopScheduleToTrain(code, stoi(strStID), stoi(strArr),
+                                                                          stoi(strDep), 1, &stationList)) {
+                                        outputLog = "-> [TU CHOI] Tau/ga khong ton tai, gio sai thu tu, ga trung lap hoac huong tuyen khong hop le.";
                                     } else {
-                                        trainList.addStopScheduleToTrain(code, stoi(strStID), stoi(strArr), stoi(strDep), 1);
-                                        trainList.resolveConflictAndScheduleSiding(&stationList);
                                         FileManager::saveTrains("trains.txt", trainList);
                                         outputLog = "-> [THANH CONG] Da them lich dung tai Ga " + strStID + " cho tau " + code + " va tu dong kiem tra xung dot!";
                                     }
@@ -845,72 +786,74 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             }
                             break;
                         }
-                        case 7: {
-                            activeViewMode = 7; // Vẽ Bảng Vé
-                            break;
-                        }
-                        case 8: {
+                        case 19: {
                             activeViewMode = 0;
-                            string tID, trCode, strCNo, strSNo, strFrom, strTo;
-                            if (showInputDialog("SEGMENT BOOKING", "1/6. Nhap Ma Ve (VD: TCK201):", tID, font) &&
-                                showInputDialog("SEGMENT BOOKING", "2/6. Nhap Ma Tau (VD: SE1):", trCode, font) &&
-                                showInputDialog("SEGMENT BOOKING", "3/6. Nhap So Toa (VD: 1):", strCNo, font) &&
-                                showInputDialog("SEGMENT BOOKING", "4/6. Nhap So Ghe (VD: 5):", strSNo, font) &&
-                                showInputDialog("SEGMENT BOOKING", "5/6. Nhap ID Ga Di (VD: 101):", strFrom, font) &&
-                                showInputDialog("SEGMENT BOOKING", "6/6. Nhap ID Ga Den (VD: 103):", strTo, font)) 
-                            {
-                                try {
-                                    int cNo = stoi(strCNo), sNo = stoi(strSNo), fromSt = stoi(strFrom), toSt = stoi(strTo);
-                                    if (ticketList.findTicketByID(tID) != nullptr) {
-                                        outputLog = "-> [THAT BAI] Ma ve " + tID + " da ton tai!";
-                                    } else if (ticketList.isSeatAvailable(&stationList, &trainList, trCode, cNo, sNo, fromSt, toSt)) {
-                                        ticketList.addTicket(tID, trCode, cNo, sNo, fromSt, toSt);
-                                        FileManager::saveTickets("tickets.txt", ticketList);
-                                        outputLog = "-> [THANH CONG] Da dat ve " + tID + " (Tau " + trCode + ", Toa " + strCNo + ", Ghe " + strSNo +
-                                                    ") chang Ga " + strFrom + " -> Ga " + strTo;
-                                    } else {
-                                        outputLog = "-> [THAT BAI] Ghe da co nguoi dat trong phan doan Km nay hoac sai chieu chay!";
-                                    }
-                                } catch (...) { outputLog = "-> [LOI] Du lieu nhap khong hop le!"; }
+                            string code;
+                            if (showInputDialog("BAI BO CHUYEN TAU", "Nhap ma tau can bai bo:", code, font)) {
+                                if (trainList.removeTrain(code)) {
+                                    trainList.resolveConflictAndScheduleSiding(&stationList);
+                                    if (FileManager::saveTrains("trains.txt", trainList))
+                                        outputLog = "-> [THANH CONG] Da bai bo tau " + code + " va cap nhat dieu phoi.";
+                                    else outputLog = "-> [LOI] Da xoa tau nhung khong ghi duoc trains.txt.";
+                                } else outputLog = "-> [TU CHOI] Khong tim thay tau " + code + ".";
                             }
                             break;
                         }
-                        case 16: {
+                        case 20: {
                             activeViewMode = 0;
-                            string tID;
-                            if (showInputDialog("TRA CUU VE", "Nhap Ma Ve can tim (VD: TCK101):", tID, font)) {
-                                TicketNode* tk = ticketList.findTicketByID(tID);
-                                if (tk) {
-                                    outputLog = "=== KET QUA TRA CUU VE ===\n\n"
-                                                " * Ma Ve        : " + tk->getTicketID() + "\n"
-                                                " * Doan Tau     : " + tk->getTrainCode() + "\n"
-                                                " * Vi tri       : Toa so " + to_string(tk->getCarriageNo()) + " - Ghe so " + to_string(tk->getSeatNo()) + "\n"
-                                                " * Chang hanh khach : Ga ID " + to_string(tk->getFromStationID()) + " -> Ga ID " + to_string(tk->getToStationID()) + "\n";
-                                } else {
-                                    outputLog = "-> [KHONG TIM THAY] Khong ton tai ve co ma: " + tID;
+                            string code, stationID;
+                            if (showInputDialog("BAI BO DIEM DUNG", "Nhap ma tau:", code, font) &&
+                                showInputDialog("BAI BO DIEM DUNG", "Nhap ID ga dung can xoa:", stationID, font)) {
+                                try {
+                                    const int id = stoi(stationID);
+                                    if (trainList.removeStopSchedule(code, id)) {
+                                        trainList.resolveConflictAndScheduleSiding(&stationList);
+                                        if (FileManager::saveTrains("trains.txt", trainList))
+                                            outputLog = "-> [THANH CONG] Da xoa diem dung tai ga " + stationID +
+                                                        " va cap nhat dieu phoi.";
+                                        else outputLog = "-> [LOI] Da xoa diem dung nhung khong ghi duoc trains.txt.";
+                                    } else outputLog = "-> [TU CHOI] Lich khong hop le hoac tau khong dung tai ga " + stationID + ".";
+                                } catch (const exception&) {
+                                    outputLog = "-> [LOI] ID ga phai la so nguyen.";
                                 }
                             }
                             break;
                         }
-                        case 9: {
+                        case 22: {
                             activeViewMode = 0;
-                            string tID;
-                            if (showInputDialog("HUY VE", "Nhap Ma Ve can huy (VD: TCK101):", tID, font)) {
-                                if (ticketList.cancelTicket(tID)) {
-                                    FileManager::saveTickets("tickets.txt", ticketList);
-                                    outputLog = "-> [THANH CONG] Da huy ve " + tID + " va giai phong ghe tren phan doan!";
-                                } else outputLog = "-> [LOI] Khong tim thay ma ve " + tID;
+                            string code, stationID, arrival, departure, track;
+                            if (showInputDialog("DIEU CHINH LICH DUNG", "Nhap ma tau:", code, font) &&
+                                showInputDialog("DIEU CHINH LICH DUNG", "Nhap ID ga dung:", stationID, font) &&
+                                showInputDialog("DIEU CHINH LICH DUNG", "Phut den (so phut tu moc ngay 0):", arrival, font) &&
+                                showInputDialog("DIEU CHINH LICH DUNG", "Phut roi:", departure, font) &&
+                                showInputDialog("DIEU CHINH LICH DUNG", "Ray su dung (1 la ray chinh):", track, font)) {
+                                try {
+                                    if (trainList.updateStopSchedule(code, stoi(stationID), stoi(arrival),
+                                            stoi(departure), stoi(track), &stationList)) {
+                                        trainList.resolveConflictAndScheduleSiding(&stationList);
+                                        if (FileManager::saveTrains("trains.txt", trainList))
+                                            outputLog = "-> [THANH CONG] Da dieu chinh lich dung va cap nhat dieu phoi.";
+                                        else outputLog = "-> [LOI] Da cap nhat lich nhung khong ghi duoc trains.txt.";
+                                    } else outputLog = "-> [TU CHOI] Thoi gian/ray sai hoac vi pham thu tu tuyen.";
+                                } catch (const exception&) {
+                                    outputLog = "-> [LOI] ID, thoi gian va ray phai la so nguyen.";
+                                }
                             }
-                            break;
-                        }
-                        case 10: {
-                            activeViewMode = 0;
-                            showSeatMapUI(stationList, trainList, ticketList, font, outputLog);
                             break;
                         }
                         case 11: {
                             activeViewMode = 0;
                             applyDelayUI(stationList, trainList, font, outputLog);
+                            break;
+                        }
+                        case 23: {
+                            activeViewMode = 0;
+                            changeMaintenanceUI(false, stationList, trainList, font, outputLog);
+                            break;
+                        }
+                        case 24: {
+                            activeViewMode = 0;
+                            changeMaintenanceUI(true, stationList, trainList, font, outputLog);
                             break;
                         }
                         case 12: {
@@ -937,12 +880,17 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
                             activeViewMode = 0;
                             stationList.clear();
                             trainList.clear();
-                            ticketList.clear();
                             FileManager::loadStations("stations.txt", stationList);
                             FileManager::loadTrains("trains.txt", trainList);
-                            FileManager::loadTickets("tickets.txt", ticketList);
-                            trainList.resolveConflictAndScheduleSiding(&stationList);
-                            outputLog = "-> [RELOAD THANH CONG] Da lam moi toan bo du lieu tu File Text va cap nhat lich tranh tau!";
+                            string commandLog;
+                            if (FileManager::processInputCommands("commands.txt", stationList,
+                                    trainList, commandLog)) {
+                                outputLog = "-> [RELOAD THANH CONG] Da nap du lieu va commands.txt.\n\n" +
+                                            commandLog;
+                            } else {
+                                trainList.resolveConflictAndScheduleSiding(&stationList);
+                                outputLog = "-> [LOI] " + commandLog;
+                            }
                             break;
                         }
                         }
@@ -956,7 +904,6 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
 
         const int stCount = stationList.getSize();
         const int trCount = trainList.getSize();
-        const int tkCount = ticketList.getSize();
 
         auto drawKPICard = [&](float x, float y, float w, float h, const string& title, const string& val, sf::Color accent) {
             sf::RectangleShape card(sf::Vector2f(w, h));
@@ -994,7 +941,7 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
 
         drawKPICard(390.0f, 18.0f, 220.0f, 68.0f, "HA TANG NHA GA", to_string(stCount) + " Ga tren tuyen", GuiTheme::AccentGreen);
         drawKPICard(625.0f, 18.0f, 220.0f, 68.0f, "DOAN TAU DANG QUAN LY", to_string(trCount) + " Chuyen (P1-P3)", GuiTheme::AccentCyan);
-        drawKPICard(860.0f, 18.0f, 220.0f, 68.0f, "VE DA PHAT HANH", to_string(tkCount) + " Ve hanh khach", GuiTheme::AccentGold);
+        drawKPICard(860.0f, 18.0f, 220.0f, 68.0f, "LICH TRINH DANG QUAN LY", to_string(trCount) + " Doan tau", GuiTheme::AccentGold);
         drawKPICard(1095.0f, 18.0f, 240.0f, 68.0f, "LOG GIAI TOA XUNG DOT", to_string(trainList.getLogCount()) + " Su kien gan nhat", GuiTheme::AccentPurple);
 
         for (int g = 0; g < NUM_GROUPS; ++g) {
@@ -1023,13 +970,12 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
 
         // Render giao diện theo chế độ view được chọn
         if (activeViewMode == 1) {
-            renderStationTable(window, font, stationList, 120.0f + scrollOffsetY);
+            renderStationTable(window, font, stationList, 150.0f + scrollOffsetY, stationSearch);
         } else if (activeViewMode == 4) {
-            renderTrainTable(window, font, trainList, 120.0f + scrollOffsetY);
+            renderTrainTable(window, font, trainList, 150.0f + scrollOffsetY, trainSearch);
         } else if (activeViewMode == 5) {
-            renderTrainDetailsPanel(window, font, trainList, stationList, 120.0f + scrollOffsetY);
-        } else if (activeViewMode == 7) {
-            renderTicketTable(window, font, ticketList, stationList, 120.0f + scrollOffsetY);
+            renderTrainDetailsPanel(window, font, trainList, stationList, 150.0f + scrollOffsetY,
+                                    stopStationSearch);
         } else {
             sf::Text logText(font, outputLog, 13);
             logText.setFillColor(GuiTheme::TextLight);
@@ -1038,6 +984,22 @@ void GuiMenu::runGUIMenu(StationList& stationList, TrainList& trainList, TicketL
         }
 
         window.setView(defaultView);
+        if (activeViewMode == 1 || activeViewMode == 4 || activeViewMode == 5) {
+            const string filterLabel = activeViewMode == 1 ? "Tim ID ga: " :
+                (activeViewMode == 4 ? "Tim ma tau: " : "Tim ID ga dung: ");
+            const string& filter = activeViewMode == 1 ? stationSearch :
+                (activeViewMode == 4 ? trainSearch : stopStationSearch);
+            sf::RectangleShape searchBox({265.0f, 28.0f});
+            searchBox.setPosition({1055.0f, 112.0f});
+            searchBox.setFillColor(GuiTheme::BgMain);
+            searchBox.setOutlineThickness(1.5f);
+            searchBox.setOutlineColor(searchFocus != 0 ? GuiTheme::AccentCyan : GuiTheme::Border);
+            window.draw(searchBox);
+            sf::Text searchText(font, filterLabel + filter, 12);
+            searchText.setFillColor(GuiTheme::TextLight);
+            searchText.setPosition({1063.0f, 118.0f});
+            window.draw(searchText);
+        }
 
         sf::RectangleShape conflictBox(sf::Vector2f(945.0f, 175.0f));
         conflictBox.setPosition(sf::Vector2f(390.0f, 568.0f));

@@ -48,16 +48,26 @@ public:
 
     // Setters
     void setPriority(int prio) { priority = prio; }
+    void setDirection(int dir) { direction = dir; }
     void bumpScheduleRevision() { ++scheduleRevision; }
 
     // Chèn toa xe độ phức tạp O(1)
-    void addCarriage(int cNo, const std::string& type, int seats) {
-        carriages.pushBack(new CarriageNode(cNo, type, seats));
+    CarriageNode* addCarriage(int cNo, const std::string& type) {
+        if (cNo <= 0 || type.empty() || findCarriage(cNo)) return nullptr;
+        CarriageNode* carriage = new CarriageNode(cNo, type);
+        carriages.pushBack(carriage);
+        return carriage;
     }
 
     // Chèn lịch dừng độ phức tạp O(1)
-    void addSchedule(int stID, int arr, int dep, int track) {
-        schedule.pushBack(new StopScheduleNode(stID, arr, dep, track));
+    StopScheduleNode* addSchedule(int stID, int arr, int dep, int track) {
+        if (stID <= 0 || arr < 0 || dep < arr || track < 1) return nullptr;
+        for (LinkedList<StopSchedule*>::Node* stop = schedule.getHead(); stop; stop = stop->next) {
+            if (stop->data->getStationID() == stID) return nullptr;
+        }
+        StopScheduleNode* newStop = new StopScheduleNode(stID, arr, dep, track);
+        schedule.pushBack(newStop);
+        return newStop;
     }
 
     // Tìm ga dừng liền trước một ga cụ thể trong hành trình của tàu
@@ -90,11 +100,6 @@ public:
             curr = curr->next;
         }
         return found;
-    }
-
-    int getCarriageSeats(int carriageNo) const {
-        CarriageNode* carriage = findCarriage(carriageNo);
-        return carriage ? carriage->getTotalSeats() : 0;
     }
 
     CarriageNode* findCarriage(int carriageNo) const {

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 
 using namespace std;
 
@@ -192,7 +193,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
     if (maxKm <= 0.0) maxKm = 100.0;
 
     const float marginX = 95.0f;
-    const float trackY = 245.0f;
+    const float trackY = 285.0f;
     const float trackWidth = WINDOW_WIDTH - 2.0f * marginX;
     const float sidingSpacingY = 44.0f;
 
@@ -227,16 +228,20 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
     };
 
     // Tự động lấy mốc thời gian bắt đầu sớm nhất của các đoàn tàu (trừ hao 15 phút chuẩn bị)
-    int earliestMinute = 1440;
+    int earliestMinute = std::numeric_limits<int>::max();
+    int latestMinute = 0;
     for (LinkedList<TrainNode*>::Node* trainNode = trainList->getHead();
          trainNode != nullptr; trainNode = trainNode->next) {
         TrainNode* tr = trainNode->data;
-        if (tr->getHeadSchedule()) {
-            earliestMinute = std::min(earliestMinute,
-                tr->getHeadSchedule()->data->getArrivalMinute());
+        for (LinkedList<StopScheduleNode*>::Node* stop = tr->getHeadSchedule();
+             stop; stop = stop->next) {
+            earliestMinute = std::min(earliestMinute, stop->data->getArrivalMinute());
+            latestMinute = std::max(latestMinute, stop->data->getDepartureMinute());
         }
     }
-    float startMinute = (earliestMinute < 1440) ? static_cast<float>(std::max(0, earliestMinute - 15)) : 0.0f;
+    if (earliestMinute == std::numeric_limits<int>::max()) earliestMinute = 0;
+    const float endMinute = static_cast<float>(std::max(latestMinute, earliestMinute) + 60);
+    float startMinute = static_cast<float>(std::max(0, earliestMinute - 15));
     float currentMinute = startMinute;
 
     float timeSpeed = 30.0f;
@@ -257,7 +262,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 } else if (keyPressed->code == sf::Keyboard::Key::Down) {
                     timeSpeed = std::max(5.0f, timeSpeed - 15.0f);
                 } else if (keyPressed->code == sf::Keyboard::Key::Right) {
-                    currentMinute = std::min(1439.0f, currentMinute + 15.0f);
+                    currentMinute = std::min(endMinute, currentMinute + 15.0f);
                 } else if (keyPressed->code == sf::Keyboard::Key::Left) {
                     currentMinute = std::max(0.0f, currentMinute - 15.0f);
                 } else if (keyPressed->code == sf::Keyboard::Key::R) {
@@ -272,8 +277,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         float animTime = animClock.getElapsedTime().asSeconds();
 
         if (!isPaused) {
-            currentMinute += timeSpeed * dt;
-            if (currentMinute >= 1440.0f) currentMinute = 0.0f;
+            currentMinute = std::min(endMinute, currentMinute + timeSpeed * dt);
         }
 
         window.clear(Theme::BgCanvas);
@@ -292,6 +296,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
             StationNode* st = station->data;
             float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
             int maxTracks = st->getMaxTracks();
+            const int simulationMinute = static_cast<int>(currentMinute);
+            const bool stationClosed = trainList->isUnderMaintenanceAt(
+                "STATION", st->getStationID(), 0, simulationMinute);
 
             // Kiểm tra có đoàn tàu nào đang dừng đỗ tại ga này không để bật đèn tín hiệu Đỏ
             bool stationOccupied = false;
@@ -304,7 +311,9 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                     StopScheduleNode* sc = stopNode->data;
                     if (sc->getStationID() == st->getStationID()) {
                         if (currentMinute >= static_cast<float>(sc->getArrivalMinute()) &&
-                            currentMinute <= static_cast<float>(sc->getDepartureMinute())) {
+                            (currentMinute <= static_cast<float>(sc->getDepartureMinute()) ||
+                             (stopNode->next == nullptr &&
+                              currentMinute <= endMinute))) {
                             stationOccupied = true;
                             break;
                         }
@@ -317,7 +326,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
             float totalStationHeight = (maxTracks - 1) * sidingSpacingY + 75.0f;
             sf::RectangleShape guideLine({2.0f, totalStationHeight});
             guideLine.setPosition({posX - 1.0f, trackY - 35.0f});
-            guideLine.setFillColor(sf::Color(62, 70, 96, 110));
+            guideLine.setFillColor(stationClosed ? Theme::SignalRed : sf::Color(62, 70, 96, 110));
             window.draw(guideLine);
 
             // 2. Các đường ray phụ (Siding Tracks: từ Ray 2 đến maxTracks)
@@ -325,17 +334,20 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 float sidY = trackY + (t - 1) * sidingSpacingY;
                 float prevY = trackY + (t - 2) * sidingSpacingY;
                 float halfLen = 46.0f;
+                const bool sidingClosed = stationClosed || trainList->isUnderMaintenanceAt(
+                    "TRACK", st->getStationID(), t, simulationMinute);
+                const sf::Color sidingColor = sidingClosed ? Theme::SignalRed : Theme::SidingRail;
 
                 // Ghi rẽ nhánh trái & phải nối chéo lên ray phía trên
-                drawThickLine(window, {posX - halfLen - 18.0f, prevY}, {posX - halfLen, sidY}, 3.0f, Theme::SidingRail);
-                drawThickLine(window, {posX + halfLen, sidY}, {posX + halfLen + 18.0f, prevY}, 3.0f, Theme::SidingRail);
+                drawThickLine(window, {posX - halfLen - 18.0f, prevY}, {posX - halfLen, sidY}, 3.0f, sidingColor);
+                drawThickLine(window, {posX + halfLen, sidY}, {posX + halfLen + 18.0f, prevY}, 3.0f, sidingColor);
 
                 // Tà vẹt trên ray phụ
                 for (float sx = posX - halfLen; sx <= posX + halfLen; sx += 10.0f) {
                     sf::RectangleShape slp({3.0f, 10.0f});
                     slp.setOrigin({1.5f, 5.0f});
                     slp.setPosition({sx, sidY});
-                    slp.setFillColor(Theme::SleeperWood);
+                    slp.setFillColor(sidingClosed ? Theme::SignalRed : Theme::SleeperWood);
                     window.draw(slp);
                 }
 
@@ -343,12 +355,12 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 sf::RectangleShape sidingBar({halfLen * 2.0f, 3.5f});
                 sidingBar.setOrigin({halfLen, 1.75f});
                 sidingBar.setPosition({posX, sidY});
-                sidingBar.setFillColor(Theme::SidingRail);
+                sidingBar.setFillColor(sidingColor);
                 window.draw(sidingBar);
 
                 // Nhãn ký hiệu ray phụ (R2, R3...)
-                sf::Text trkLabel(font, "R" + to_string(t), 10);
-                trkLabel.setFillColor(Theme::TextSecondary);
+                sf::Text trkLabel(font, "R" + to_string(t), 12);
+                trkLabel.setFillColor(sidingClosed ? Theme::SignalRed : Theme::TextSecondary);
                 trkLabel.setPosition({posX - halfLen - 18.0f, sidY - 6.0f});
                 window.draw(trkLabel);
             }
@@ -356,27 +368,29 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
             // 3. Vùng Sân ga (Station Platform Badge)
             sf::ConvexShape platform = createRoundedRect(92.0f, 24.0f, 6.0f);
             platform.setPosition({posX, trackY - 58.0f});
-            platform.setFillColor(Theme::StationPlatform);
+            platform.setFillColor(stationClosed ? sf::Color(100, 28, 38) : Theme::StationPlatform);
             platform.setOutlineThickness(1.5f);
-            platform.setOutlineColor(Theme::HudBorder);
+            platform.setOutlineColor(stationClosed ? Theme::SignalRed : Theme::HudBorder);
             window.draw(platform);
 
-            sf::Text stTitle(font, st->getName(), 12);
+            sf::Text stTitle(font, st->getName(), 14);
             stTitle.setFillColor(Theme::AccentGold);
             sf::FloatRect tb = stTitle.getLocalBounds();
             stTitle.setPosition({posX - tb.size.x / 2.0f, trackY - 66.0f});
             window.draw(stTitle);
 
             sf::Text stSub(font, "ID:" + to_string(st->getStationID()) + " | " +
-                           to_string(static_cast<int>(st->getKmMarker())) + "km (" + to_string(maxTracks) + "R)", 10);
-            stSub.setFillColor(Theme::TextSecondary);
+                           to_string(static_cast<int>(st->getKmMarker())) + "km (" + to_string(maxTracks) + "R)", 12);
+            stSub.setFillColor(stationClosed ? Theme::SignalRed : Theme::TextSecondary);
             sf::FloatRect sb = stSub.getLocalBounds();
             stSub.setPosition({posX - sb.size.x / 2.0f, trackY - 42.0f});
             window.draw(stSub);
 
             // 4. Đèn tín hiệu nhà ga (Xanh / Đỏ nhấp nháy)
-            sf::Color sigColor = stationOccupied ? Theme::SignalRed : Theme::SignalGreen;
-            float pulse = stationOccupied ? (0.55f + 0.45f * std::sin(animTime * 7.0f)) : 1.0f;
+            sf::Color sigColor = stationClosed || stationOccupied
+                ? Theme::SignalRed : Theme::SignalGreen;
+            float pulse = stationClosed || stationOccupied
+                ? (0.55f + 0.45f * std::sin(animTime * 7.0f)) : 1.0f;
 
             sf::CircleShape sigGlow(10.0f);
             sigGlow.setOrigin({10.0f, 10.0f});
@@ -398,21 +412,51 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
 
         for (LinkedList<StationNode*>::Node* station = stationList->getHead();
              station != nullptr; station = station->next) {
+            StationNode* first = station->data;
+            const int minute = static_cast<int>(currentMinute);
+            const bool stationClosed = trainList->isUnderMaintenanceAt(
+                "STATION", first->getStationID(), 0, minute);
+            const bool mainTrackClosed = stationClosed ||
+                trainList->isUnderMaintenanceAt("TRACK", first->getStationID(), 1, minute);
+            const float firstX = marginX +
+                static_cast<float>(first->getKmMarker() / maxKm) * trackWidth;
+            if (mainTrackClosed) {
+                drawThickLine(window, {firstX - 46.0f, trackY},
+                              {firstX + 46.0f, trackY}, 5.0f, Theme::SignalRed);
+            }
+            for (LinkedList<StationNode*>::Node* other = stationList->getHead();
+                 other != nullptr; other = other->next) {
+                StationNode* second = other->data;
+                if (first->getStationID() < second->getStationID() &&
+                    trainList->isUnderMaintenanceAt("BLOCK", first->getStationID(),
+                        second->getStationID(), minute)) {
+                    const float secondX = marginX +
+                        static_cast<float>(second->getKmMarker() / maxKm) * trackWidth;
+                    drawThickLine(window, {firstX, trackY}, {secondX, trackY},
+                                  5.0f, Theme::SignalRed);
+                }
+            }
+        }
+
+        for (LinkedList<StationNode*>::Node* station = stationList->getHead();
+             station != nullptr; station = station->next) {
             StationNode* st = station->data;
             float posX = marginX + static_cast<float>(st->getKmMarker() / maxKm) * trackWidth;
+            const bool stationClosed = trainList->isUnderMaintenanceAt(
+                "STATION", st->getStationID(), 0, static_cast<int>(currentMinute));
 
             sf::CircleShape outerNode(9.0f);
             outerNode.setOrigin({9.0f, 9.0f});
             outerNode.setPosition({posX, trackY});
             outerNode.setFillColor(Theme::BgCanvas);
             outerNode.setOutlineThickness(2.5f);
-            outerNode.setOutlineColor(Theme::StationCore);
+            outerNode.setOutlineColor(stationClosed ? Theme::SignalRed : Theme::StationCore);
             window.draw(outerNode);
 
             sf::CircleShape innerNode(4.0f);
             innerNode.setOrigin({4.0f, 4.0f});
             innerNode.setPosition({posX, trackY});
-            innerNode.setFillColor(Theme::StationCore);
+            innerNode.setFillColor(stationClosed ? Theme::SignalRed : Theme::StationCore);
             window.draw(innerNode);
         }
 
@@ -467,14 +511,14 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
                 // 5. Nhãn Mã tàu + Cấp ưu tiên (P1, P2, P3)
                 string code = train->getTrainCode();
                 string badgeStr = code + " [P" + to_string(train->getPriority()) + "]";
-                sf::Text trainLabel(font, badgeStr, 10);
+                sf::Text trainLabel(font, badgeStr, 12);
                 trainLabel.setFillColor(sf::Color(15, 18, 25));
                 sf::FloatRect lb = trainLabel.getLocalBounds();
                 trainLabel.setPosition({posX - lb.size.x / 2.0f, posY - 0.5f});
                 window.draw(trainLabel);
 
                 // Nhãn hướng chạy nổi phía trên đoàn tàu
-                sf::Text dirTag(font, (train->getDirection() == 1 ? code + " ->" : "<- " + code), 11);
+                sf::Text dirTag(font, (train->getDirection() == 1 ? code + " ->" : "<- " + code), 13);
                 dirTag.setFillColor(Theme::TextPrimary);
                 sf::FloatRect db = dirTag.getLocalBounds();
                 dirTag.setPosition({posX - db.size.x / 2.0f, posY - 26.0f});
@@ -491,11 +535,14 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         topHud.setOutlineColor(Theme::HudBorder);
         window.draw(topHud);
 
-        int hours = (static_cast<int>(currentMinute) / 60) % 24;
+        const int absoluteMinute = static_cast<int>(currentMinute);
+        const int day = absoluteMinute / 1440;
+        int hours = (absoluteMinute / 60) % 24;
         int mins  = static_cast<int>(currentMinute) % 60;
         int secs  = static_cast<int>((currentMinute - std::floor(currentMinute)) * 60.0f);
 
         stringstream clockSS;
+        if (day > 0) clockSS << "D+" << day << " ";
         clockSS << setfill('0') << setw(2) << hours << ":"
                 << setfill('0') << setw(2) << mins << ":"
                 << setfill('0') << setw(2) << secs;
@@ -529,7 +576,7 @@ void GraphicalSimulationEngine::runSFMLSimulation(StationList* stationList, Trai
         drawLegendItem(45.0f, 76.0f, Theme::TrainRunning, "Chay khu gian (Cyan)");
         drawLegendItem(215.0f, 76.0f, Theme::TrainMainStop, "Do Ray chinh R1 (Amber)");
         drawLegendItem(400.0f, 76.0f, Theme::TrainSidingWait, "Tranh tau Ray phu R2..N (Purple)");
-        drawLegendItem(635.0f, 76.0f, Theme::SignalRed, "Den Do: Co tau chiem dung ga");
+        drawLegendItem(635.0f, 76.0f, Theme::SignalRed, "Bao tri/ga co tau chiem");
         drawLegendItem(845.0f, 76.0f, Theme::SignalGreen, "Den Xanh: Ga thong thoang");
 
         // 2. Khung Nhật ký Giải quyết Xung đột (Đọc trực tiếp từ Circular Buffer của TrainList)

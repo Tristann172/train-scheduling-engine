@@ -1,8 +1,7 @@
 101|Ha Noi|0|3
-102|Phu Ly|56|2
-103|Nam Dinh|87|3
-104|Ninh Binh|115|2
-105|Thanh Hoa|175|3
-106|Vinh|319|4
-107|Dong Hoi|522|3
-108|Da Nang|791|4
+102|Nam Dinh|87|1
+103|Ninh Binh|115|2
+104|Thanh Hoa|175|3
+105|Vinh|319|2
+106|Dong Hoi|522|1
+107|Hue|688|3

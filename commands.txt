@@ -1,0 +1,19 @@
+# Moi lenh mot dong, cac truong phan cach bang |.
+# Thoi gian lich va bao tri la so phut tuyet doi tu ngay 0 (1500 = D+1 01:00).
+# Lenh dong tai nguyen co the mo lai bang OPEN_* cung loai va cung khoang thoi gian.
+# Vi du:
+# ADD_STATION|108|Dong Ha|640|3
+# UPDATE_STATION|108|Dong Ha|640|3
+# DELETE_STATION|108
+# ADD_TRAIN|SE5|1|1
+# UPDATE_TRAIN|SE1|1|1
+# DELETE_TRAIN|SE5
+# ADD_CARRIAGE|SE1|3|GiuongNam
+# UPDATE_CARRIAGE|SE1|3|GiuongNam
+# DELETE_CARRIAGE|SE1|3
+# ADD_STOP|SE1|108|1500|1510|1
+# UPDATE_STOP|SE1|108|1500|1520|2
+# DELETE_STOP|SE1|108
+CLOSE_STATION|104|500|560
+# CLOSE_BLOCK|104|105|600|660
+# CLOSE_TRACK|104|2|700|760

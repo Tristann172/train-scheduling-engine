@@ -532,8 +532,8 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
             lastStop->getArrivalMinute(), parkingEnd, station->getMaxTracks(), train);
         if (siding > 1) {
             lastStop->setTrackUsed(siding);
-            addConflictLog("[Ga ket thuc " + to_string(lastStop->getStationID()) +
-                           "] Tau " + train->getTrainCode() + " dau Ray phu R" +
+            addConflictLog("[Ga kết thúc " + to_string(lastStop->getStationID()) +
+                           "] " + train->getTrainCode() + " đậu ray phụ " +
                            to_string(siding));
         }
     }
@@ -605,8 +605,8 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
                                 station->getMaxTracks(), current.train) != track) continue;
                         current.stop->setTrackUsed(track);
                         current.train->bumpScheduleRevision();
-                        addConflictLog("[Bao tri] Tau " + current.train->getTrainCode() +
-                            " doi sang Ray " + to_string(track) + " tai Ga " +
+                        addConflictLog("[Bảo trì] " + current.train->getTrainCode() +
+                            " đổi sang ray " + to_string(track) + " tại Ga " +
                             to_string(current.stationID));
                         pushTrainEvents(events, current.train, sequence,
                                         SAFETY_HEADWAY, current.time);
@@ -626,8 +626,8 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
                 current.stop->setDepartureMinute(current.stop->getDepartureMinute() + wait);
                 current.train->applyDelayPropagation(current.targetStationID, wait, true);
             }
-            addConflictLog("[Bao tri] Tau " + current.train->getTrainCode() +
-                " cho " + to_string(wait) + "p truoc khi qua tai nguyen dang sua");
+            addConflictLog("[Bảo trì] " + current.train->getTrainCode() +
+                " chờ " + to_string(wait) + " phút");
             current.train->bumpScheduleRevision();
             pushTrainEvents(events, current.train, sequence, SAFETY_HEADWAY, current.time);
             continue;
@@ -681,7 +681,7 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
             if (siding != -1) {
                 yielding.stop->setTrackUsed(siding);
                 addConflictLog("[Ga " + to_string(yielding.stationID) + "] " +
-                            yieldingTrain->getTrainCode() + " vao Ray " + to_string(siding));
+                            yieldingTrain->getTrainCode() + " vào ray " + to_string(siding));
                 changed = true;
             } else {
                 const int wait = priority.endTime - yielding.time;
@@ -723,9 +723,9 @@ void TrainList::resolveConflictAndScheduleSiding(StationList* stationList) {
             }
             addConflictLog("[Khu gian " + to_string(yielding.stationID) + "->" +
                         to_string(yielding.targetStationID) + "] " +
-                        yieldingTrain->getTrainCode() + " cho " +
-                        priorityTrain->getTrainCode() + " +" + to_string(wait) + "p" +
-                        (siding != -1 ? " (doi sang Ray " + to_string(siding) + ")" : ""));
+                        yieldingTrain->getTrainCode() + " chờ " +
+                        priorityTrain->getTrainCode() + " +" + to_string(wait) + " phút" +
+                        (siding != -1 ? ", sang ray " + to_string(siding) : ""));
             changed = true;
         }
     }
@@ -746,8 +746,8 @@ bool TrainList::applyDelayAndReschedule(const string& trainCode, int fromStation
     TrainNode* train = findTrainByCode(trainCode);
     if (!train) return false;
 
-    addConflictLog("[Su co] Tau " + trainCode + " bi tre +" +
-                   to_string(delayMinutes) + "p tu Ga " +
+    addConflictLog("[Sự cố] " + trainCode + " bị trễ +" +
+                   to_string(delayMinutes) + " phút từ Ga " +
                    to_string(fromStationID));
     const bool delayed =
         train->applyDelayPropagation(fromStationID, delayMinutes, true);

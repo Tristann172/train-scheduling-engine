@@ -66,6 +66,9 @@ public:
     bool isUnderMaintenanceAt(const std::string& resource, int firstID, int secondID,
                               int minute) const;
 
+    int getMaintenanceCount() const { return maintenanceCount; }
+    const MaintenanceWindow& getMaintenance(int index) const { return maintenanceWindows[index]; }
+
     void resolveConflictAndScheduleSiding(StationList* stationList);
     bool applyDelayAndReschedule(const std::string& trainCode, int fromStationID, int delayMinutes, StationList* stationList);
 

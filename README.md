@@ -27,7 +27,7 @@ là ngày kế tiếp lúc `01:00`. Mô phỏng chạy từ chuyến sớm nhấ
 trình, không quay vòng sau 1440 phút. Bảng lịch và đồng hồ hiển thị ngày dạng
 `D+1 01:00`.
 
-Có thể ghi lệnh trong `commands.txt`, mỗi lệnh một dòng, các trường phân cách bằng
+Có thể ghi lệnh trong `data/commands.txt`, mỗi lệnh một dòng, các trường phân cách bằng
 dấu `|`; dòng bắt đầu bằng `#` là chú thích. Chương trình áp dụng lệnh khi khởi
 động và có thể nạp lại bằng nút "Áp dụng commands.txt" trên màn Nhà ga:
 
@@ -82,24 +82,35 @@ Giờ nhập theo dạng `09:20` hoặc `D+1 01:00`.
 
 ## Dữ liệu
 
-- `stations.txt`, `trains.txt`, `commands.txt`: dữ liệu vận hành, chương trình tự
+- `data/stations.txt`, `data/trains.txt`, `data/commands.txt`: dữ liệu vận hành, chương trình tự
   ghi lại `trains.txt` sau khi điều phối.
-- `timetable_base.txt`: lịch công bố để so sánh độ trễ, chương trình chỉ đọc. Giờ
+- `data/timetable_base.txt`: lịch công bố để so sánh độ trễ, chương trình chỉ đọc. Giờ
   SE1 đến SE4 lấy từ công cụ tra cứu của Đường sắt Việt Nam ngày 08/11/2026, ngày 0
   là 10/11/2026.
-- Số ray trong `stations.txt` là số ước lượng từ OpenStreetMap, không phải số liệu
-  chính thức. Hai lịch bảo trì trong `commands.txt` là ví dụ minh họa.
-- `map_data.txt`: đường bờ biển và đường ray lấy từ Natural Earth, tọa độ ga đối
+- Số ray trong `data/stations.txt` là số ước lượng từ OpenStreetMap, không phải số liệu
+  chính thức. Hai lịch bảo trì trong `data/commands.txt` là ví dụ minh họa.
+- `data/map_data.txt`: đường bờ biển và đường ray lấy từ Natural Earth, tọa độ ga đối
   chiếu với OpenStreetMap. Ga mới được đặt lên tuyến theo lý trình.
-- `assets/fonts`: font Barlow (giấy phép SIL OFL, xem `OFL.txt`).
+- `assets/fonts`: font Barlow và Arial (giấy phép SIL OFL của Barlow xem `OFL.txt`).
 
 ## Biên dịch
 
-Cần SFML 3.1 và C++17. Với MinGW:
+Cần SFML 3.1 và C++17. Cấu trúc thư mục chính gồm `src/` (mã nguồn), `include/`
+(header), `data/` (dữ liệu), `assets/` (font), `tools/` (công cụ) và `bin/` (DLL).
+Với MinGW, có thể biên dịch trực tiếp:
 
 ```text
-g++ -std=c++17 main.cpp FileManager.cpp GraphicalSimulationEngine.cpp GuiMenu.cpp MapData.cpp StationList.cpp TrainList.cpp UiKit.cpp -IC:/SFML-3.1.0/include -LC:/SFML-3.1.0/lib -lsfml-graphics -lsfml-window -lsfml-system -o TrainScheduling.exe
+g++ -std=c++17 src/main.cpp src/FileManager.cpp src/GraphicalSimulationEngine.cpp src/GuiMenu.cpp src/MapData.cpp src/StationList.cpp src/TrainList.cpp src/UiKit.cpp -Iinclude -IC:/SFML-3.1.0/include -LC:/SFML-3.1.0/lib -lsfml-graphics -lsfml-window -lsfml-system -o bin/TrainScheduling.exe
 ```
 
-Với MSVC cần thêm cờ `/utf-8`. Chạy chương trình tại thư mục chứa các file dữ liệu
-và thư mục `assets`.
+Hoặc dùng CMake 3.21+:
+
+```text
+cmake -S . -B build -DSFML_DIR=C:/SFML-3.1.0/lib/cmake/SFML
+cmake --build build
+```
+
+Chạy từ thư mục gốc của dự án để các đường dẫn dữ liệu và font được phân giải đúng.
+Với lệnh MinGW, chạy `.\bin\TrainScheduling.exe`; với CMake chạy
+`.\build\bin\TrainScheduling.exe`. CMake tự sao chép SFML DLL cạnh file chạy.
+Có thể đặt `SFML_DIR` trỏ tới thư mục cấu hình SFML của máy. Với MSVC cần bật `/utf-8`.

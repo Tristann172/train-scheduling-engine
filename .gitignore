@@ -1,1 +1,5 @@
 *.exe
+build/
+cmake-build-*/
+*.o
+*.obj

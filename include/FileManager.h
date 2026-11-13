@@ -12,9 +12,4 @@ public:
 
     static void loadTrains(const std::string& filename, TrainList& trainList);
     static bool saveTrains(const std::string& filename, const TrainList& trainList);
-
-    static bool processInputCommands(const std::string& filename,
-                                     StationList& stationList,
-                                     TrainList& trainList,
-                                     std::string& resultLog);
 };

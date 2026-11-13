@@ -96,7 +96,7 @@ namespace {
         }
     }
 
-    // KHÓA TÀI NGUYÊN (Sử dụng cho HashMap của bạn)
+    // KHÓA TÀI NGUYÊN
     struct ResourceKey {
         int type; // 0: Ray trong ga, 1: Khu gian
         int id1;  
@@ -165,9 +165,9 @@ LinkedList<TrainNode*>::Node* TrainList::getHead() const {
 
 bool TrainList::addTrain(const string& code, int direction, int priority) {
     if (code.empty() || (direction != 0 && direction != 1) ||
-        priority > 3 ||
+        priority < -1 || priority > 3 ||
         trainsByCode.find(code)) return false;
-    TrainNode* newNode = new TrainNode(code, direction, priority);
+    TrainNode* newNode = Train::createTrain(code, direction, priority);
     trains.pushBack(newNode);
     trainsByCode.insert(code, newNode);
     ++structureRevision;
@@ -182,7 +182,8 @@ TrainNode* TrainList::findTrainByCode(const string& code) const {
 bool TrainList::updateTrain(const string& code, int direction, int priority,
                             const StationList* stationList) {
     TrainNode* train = findTrainByCode(code);
-    if (!train || !stationList || (direction != 0 && direction != 1) || priority > 3) {
+    if (!train || !stationList || (direction != 0 && direction != 1) ||
+        priority < -1 || priority > 3) {
         return false;
     }
     // Chỉ đổi hướng khi thứ tự các ga hiện tại vẫn hợp lệ theo mốc km.
@@ -202,9 +203,25 @@ bool TrainList::updateTrain(const string& code, int direction, int priority,
         }
         previous = current;
     }
-    train->setDirection(direction);
-    train->setPriority(priority > 0 ? priority : TrainNode::inferPriorityFromCode(code));
-    train->bumpScheduleRevision();
+    const int resolvedPriority = priority > 0
+        ? priority : TrainNode::inferPriorityFromCode(code);
+    if (resolvedPriority != train->getDefaultPriority()) {
+        LinkedList<TrainNode*>::Node* trainNode = trains.getHead();
+        while (trainNode && trainNode->data != train) trainNode = trainNode->next;
+        if (!trainNode) return false;
+
+        TrainNode* replacement = Train::createTrain(code, direction, resolvedPriority);
+        replacement->replaceOperationalDataFrom(*train);
+        replacement->bumpScheduleRevision();
+        trainNode->data = replacement;
+        trainsByCode.insert(code, replacement);
+        delete train;
+        train = replacement;
+    } else {
+        train->setDirection(direction);
+        train->setPriority(resolvedPriority);
+        train->bumpScheduleRevision();
+    }
     ++structureRevision;
     return true;
 }

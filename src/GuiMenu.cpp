@@ -12,7 +12,6 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
 #include <optional>
 #include <stdexcept>
 
@@ -93,7 +92,7 @@ RailwayApp::RailwayApp(StationList& stationList, TrainList& trainList)
     : stations(stationList), trains(trainList), screen(AppScreen::Stations), running(true),
       noticeIsError(false), noticeTime(0.0f), stationScroll(0), trainScroll(0), windowScroll(0),
       formKind(FormKind::None), formChoiceA(0), formChoiceB(0), formTrack(1), formDayA(0), formDayB(0),
-      formStation(0), confirmAction(ConfirmAction::None), confirmWindow(-1) {}
+      formStation(0), formCarriageNo(0), confirmAction(ConfirmAction::None), confirmWindow(-1) {}
 
 void RailwayApp::init() {
     ui.loadFonts();
@@ -136,30 +135,12 @@ void RailwayApp::reloadData() {
     trains.clear();
     FileManager::loadStations("data/stations.txt", stations);
     FileManager::loadTrains("data/trains.txt", trains);
-    string log;
-    if (FileManager::processInputCommands("data/commands.txt", stations, trains, log)) {
-        setNotice("Đã nạp lại dữ liệu và commands.txt.");
-    } else {
-        trains.resolveConflictAndScheduleSiding(&stations);
-        setNotice("Lỗi khi nạp: " + log, true);
-    }
+    trains.resolveConflictAndScheduleSiding(&stations);
+    setNotice("Đã nạp lại dữ liệu ga, tàu và lịch bảo trì.");
     refresh();
 }
 
-void RailwayApp::applyCommands() {
-    string log;
-    if (FileManager::processInputCommands("data/commands.txt", stations, trains, log)) {
-        saveAll();
-        setNotice(log.find("TU CHOI") == string::npos ? "Đã áp dụng toàn bộ lệnh trong commands.txt."
-                                                     : "Có lệnh bị từ chối trong commands.txt.",
-                  log.find("TU CHOI") != string::npos);
-    } else {
-        setNotice("Lỗi: " + log, true);
-    }
-    refresh();
-}
-
-// Đóng hoặc mở tài nguyên, ghi vào commands.txt để giữ trạng thái khi khởi động lại.
+// Đóng hoặc mở tài nguyên trong bộ nhớ, sau đó lưu trực tiếp vào trains.txt.
 bool RailwayApp::changeMaintenance(bool opening, const string& resource, int first, int second,
                                    int start, int end, string& error) {
     StationNode* firstStation = stations.findStationByID(first);
@@ -205,19 +186,6 @@ bool RailwayApp::changeMaintenance(bool opening, const string& resource, int fir
     if (!FileManager::saveTrains("data/trains.txt", trains)) {
         rollback();
         error = "Không ghi được trains.txt, đã khôi phục trạng thái.";
-        return false;
-    }
-    ofstream commands("data/commands.txt", ios::app);
-    if (commands) {
-        commands << (opening ? "OPEN_" : "CLOSE_") << resource << "|" << first;
-        if (resource != "STATION") commands << "|" << second;
-        commands << "|" << start << "|" << end << '\n';
-    }
-    commands.flush();
-    if (!commands) {
-        rollback();
-        FileManager::saveTrains("data/trains.txt", trains);
-        error = "Không ghi được commands.txt, đã khôi phục trạng thái.";
         return false;
     }
     refresh();
@@ -326,8 +294,6 @@ void RailwayApp::drawStations() {
     if (ui.button(205, right, rowY, 124.0f, 44.0f, "Mở mô phỏng", ButtonStyle::Accent)) screen = AppScreen::Map;
     right -= 124.0f;
     if (ui.button(204, right, rowY, 112.0f, 44.0f, "Nạp lại từ file", ButtonStyle::Outline)) reloadData();
-    right -= 192.0f;
-    if (ui.button(203, right, rowY, 180.0f, 44.0f, "Áp dụng commands.txt", ButtonStyle::Outline)) applyCommands();
     right -= 130.0f;
     if (ui.button(202, right, rowY, 118.0f, 44.0f, "Quét xung đột", ButtonStyle::Outline)) scanConflicts();
 
@@ -340,8 +306,9 @@ void RailwayApp::drawStations() {
     const float colName = colId + 56.0f;
     const float colKm = colName + 160.0f;
     const float colRay = colKm + 92.0f;
-    const float colNote = colRay + 150.0f;
-    const float noteW = tableX + tableW - 12.0f - colNote;
+    const float colNote = colRay + 100.0f;
+    const float actionX = tableX + tableW - 118.0f;
+    const float noteW = actionX - 8.0f - colNote;
 
     int indexes[SIM_MAX_STATIONS];
     int matches = 0;
@@ -363,6 +330,7 @@ void RailwayApp::drawStations() {
     ui.text(colKm, headY, "Lý trình", FontCondSemi, 16.0f, Palette::Ink);
     ui.text(colRay, headY, "Số ray", FontCondSemi, 16.0f, Palette::Ink);
     ui.text(colNote, headY, "Ghi chú", FontCondSemi, 16.0f, Palette::Ink);
+    ui.text(actionX, headY, "Thao tác", FontCondSemi, 16.0f, Palette::Ink);
     ui.rect(tableX, tableY + 32.0f, tableW, 1.0f, Palette::Ink);
 
     for (int r = 0; r < visible && r + stationScroll < matches; ++r) {
@@ -392,6 +360,19 @@ void RailwayApp::drawStations() {
             }
         }
         ui.textFit(colNote, mid, note, hot ? FontSemi : FontRegular, 14.0f, hot ? Palette::Red : Palette::Muted, noteW);
+        bool actionClicked = false;
+        if (ui.button(6000 + r * 2, actionX, top + 2.0f, 52.0f, 22.0f, "Sửa", ButtonStyle::Outline)) {
+            openEditStation(st.id);
+            actionClicked = true;
+        }
+        if (ui.button(6001 + r * 2, actionX + 58.0f, top + 2.0f, 52.0f, 22.0f, "Xóa", ButtonStyle::Danger)) {
+            formStation = st.id;
+            confirmAction = ConfirmAction::RemoveStation;
+            confirmText = "Xóa ga " + st.name + "? Ga không được có tàu dừng hoặc lịch bảo trì.";
+            openForm(FormKind::Confirm);
+            actionClicked = true;
+        }
+        if (!actionClicked && ui.clicked(tableX, top, tableW, rowH)) openEditStation(st.id);
         ui.rect(tableX, top + rowH - 1.0f, tableW, 1.0f, Palette::RuleSoft);
     }
     ui.rect(tableX, tableY + 33.0f + visible * rowH, tableW, 2.0f, Palette::Ink);
@@ -461,6 +442,7 @@ void RailwayApp::drawTrains() {
         return;
     }
 
+    const TrainNode* source = trains.findTrainByCode(current->code);
     float right = 1328.0f;
     right -= 116.0f;
     if (ui.button(304, right, rowY, 116.0f, 44.0f, "Bãi bỏ chuyến", ButtonStyle::Danger)) {
@@ -472,23 +454,27 @@ void RailwayApp::drawTrains() {
     if (ui.button(303, right, rowY, 136.0f, 44.0f, "Thêm điểm dừng", ButtonStyle::Outline)) openForm(FormKind::AddStop);
     right -= 100.0f;
     if (ui.button(302, right, rowY, 88.0f, 44.0f, "Gán toa", ButtonStyle::Outline)) openForm(FormKind::AddCarriage);
+    right -= 94.0f;
+    if (ui.button(306, right, rowY, 82.0f, 44.0f, "Sửa tàu", ButtonStyle::Outline)) openEditTrain(current->code);
 
     const float codeW = ui.text(detailX, 152.0f, current->code, FontCondBold, 30.0f, Palette::Ink);
     ui.text(detailX + codeW + 12.0f, 154.0f,
-            string(current->direction == 1 ? "Bắc → Nam" : "Nam → Bắc") + " · " + priorityName(current->priority),
+            (source ? source->getTrainTypeName() + " · " : "") +
+            string(current->direction == 1 ? "Bắc → Nam" : "Nam → Bắc") +
+            " · " + priorityName(current->priority),
             FontRegular, 15.0f, Palette::Muted);
 
     // Các toa xe của đoàn tàu.
-    const TrainNode* source = trains.findTrainByCode(current->code);
     float chipX = detailX;
     if (source) {
         for (LinkedList<CarriageNode*>::Node* c = source->getHeadCarriage(); c; c = c->next) {
             const string label = "Toa " + to_string(c->data->getCarriageNo()) + " · " + c->data->getType();
             const float w = ui.textWidth(label, FontRegular, 14.0f) + 18.0f;
             if (chipX + w > detailX + detailW) break;
-            ui.rect(chipX, 172.0f, w, 24.0f, Palette::White);
-            ui.frame(chipX, 172.0f, w, 24.0f, 1.0f, Palette::Rule);
-            ui.text(chipX + 9.0f, 184.0f, label, FontRegular, 14.0f, Palette::Ink);
+            if (ui.button(3100 + c->data->getCarriageNo(), chipX, 172.0f, w, 24.0f,
+                          label, ButtonStyle::Outline)) {
+                openEditCarriage(current->code, c->data->getCarriageNo());
+            }
             chipX += w + 8.0f;
         }
     }
@@ -794,6 +780,37 @@ void RailwayApp::openForm(FormKind kind) {
     if (kind != FormKind::Confirm) ui.focus(FIELD_BASE + (formValues[0].empty() ? 0 : 1));
 }
 
+void RailwayApp::openEditStation(int stationID) {
+    StationNode* station = stations.findStationByID(stationID);
+    if (!station) return;
+    openForm(FormKind::EditStation);
+    formStation = stationID;
+    formValues[0] = station->getName();
+    formValues[1] = to_string(station->getKmMarker());
+    formValues[2] = to_string(station->getMaxTracks());
+    ui.focus(FIELD_BASE);
+}
+
+void RailwayApp::openEditTrain(const string& code) {
+    TrainNode* train = trains.findTrainByCode(code);
+    if (!train) return;
+    openForm(FormKind::EditTrain);
+    formTrain = code;
+    formChoiceA = train->getDirection() == 1 ? 0 : 1;
+    formChoiceB = train->getPriority();
+}
+
+void RailwayApp::openEditCarriage(const string& code, int carriageNo) {
+    TrainNode* train = trains.findTrainByCode(code);
+    CarriageNode* carriage = train ? train->findCarriage(carriageNo) : nullptr;
+    if (!carriage) return;
+    openForm(FormKind::EditCarriage);
+    formTrain = code;
+    formCarriageNo = carriageNo;
+    formValues[0] = carriage->getType();
+    ui.focus(FIELD_BASE);
+}
+
 void RailwayApp::openEditStop(const string& code, int stationID) {
     const SimTrain* train = nullptr;
     for (int i = 0; i < model.trainCount(); ++i) {
@@ -822,7 +839,22 @@ void RailwayApp::closeForm() {
 }
 
 void RailwayApp::runConfirm() {
-    if (confirmAction == ConfirmAction::RemoveTrain) {
+    if (confirmAction == ConfirmAction::RemoveStation) {
+        StationNode* station = stations.findStationByID(formStation);
+        if (!station) {
+            setNotice("Không tìm thấy ga cần xóa.", true);
+        } else if (trains.hasStationStop(formStation) ||
+                   trains.hasMaintenanceForStation(formStation)) {
+            setNotice("Không thể xóa ga đang có tàu dừng hoặc lịch bảo trì.", true);
+        } else if (stations.removeStation(formStation)) {
+            trains.resolveConflictAndScheduleSiding(&stations);
+            saveAll();
+            refresh();
+            setNotice("Đã xóa ga " + to_string(formStation) + ".");
+        } else {
+            setNotice("Không thể xóa ga.", true);
+        }
+    } else if (confirmAction == ConfirmAction::RemoveTrain) {
         const string code = selectedTrain;
         if (trains.removeTrain(code)) {
             trains.resolveConflictAndScheduleSiding(&stations);
@@ -841,6 +873,14 @@ void RailwayApp::runConfirm() {
             setNotice("Đã bãi bỏ điểm dừng và cập nhật điều phối.");
         } else {
             setNotice("Không thể bãi bỏ: lịch phải còn ít nhất 2 điểm dừng.", true);
+        }
+    } else if (confirmAction == ConfirmAction::RemoveCarriage) {
+        if (trains.removeCarriage(formTrain, formCarriageNo)) {
+            saveAll();
+            refresh();
+            setNotice("Đã xóa toa " + to_string(formCarriageNo) + ".");
+        } else {
+            setNotice("Không tìm thấy toa cần xóa.", true);
         }
     } else if (confirmAction == ConfirmAction::ReopenWindow && confirmWindow >= 0 &&
                confirmWindow < model.windowCount()) {
@@ -876,6 +916,30 @@ void RailwayApp::submitForm() {
         setNotice("Đã thêm ga " + trim(formValues[1]) + ".");
         break;
     }
+    case FormKind::EditStation: {
+        int tracks = 0;
+        double km = 0.0;
+        StationNode* station = stations.findStationByID(formStation);
+        if (!station || !parseReal(formValues[1], km) || !parseInteger(formValues[2], tracks)) {
+            formError = "Lý trình và số ray phải là số.";
+            return;
+        }
+        const bool kmUnchanged = km == station->getKmMarker();
+        const bool routeSafe = !trains.hasStationStop(formStation) || kmUnchanged;
+        const bool maintenanceSafe = kmUnchanged ||
+            !trains.hasMaintenanceBlockForStation(formStation);
+        if (!routeSafe || !maintenanceSafe || trains.hasTrackAbove(formStation, tracks) ||
+            trains.hasMaintenanceTrackAbove(formStation, tracks) ||
+            !stations.updateStation(formStation, trim(formValues[0]), km, tracks)) {
+            formError = "Tên, lý trình hoặc số ray vi phạm ràng buộc tuyến và bảo trì.";
+            return;
+        }
+        trains.resolveConflictAndScheduleSiding(&stations);
+        saveAll();
+        refresh();
+        setNotice("Đã cập nhật ga " + to_string(formStation) + ".");
+        break;
+    }
     case FormKind::AddTrain: {
         const string code = trim(formValues[0]);
         const int priority = formChoiceB == 0 ? -1 : formChoiceB;
@@ -887,6 +951,20 @@ void RailwayApp::submitForm() {
         refresh();
         selectedTrain = code;
         setNotice("Đã thêm tàu " + code + ".");
+        break;
+    }
+    case FormKind::EditTrain: {
+        const int direction = formChoiceA == 0 ? 1 : 0;
+        const int priority = formChoiceB == 0 ? -1 : formChoiceB;
+        if (!trains.updateTrain(formTrain, direction, priority, &stations)) {
+            formError = "Hướng chạy không phù hợp thứ tự ga hoặc cấp ưu tiên không hợp lệ.";
+            return;
+        }
+        trains.resolveConflictAndScheduleSiding(&stations);
+        saveAll();
+        refresh();
+        selectedTrain = formTrain;
+        setNotice("Đã cập nhật tàu " + formTrain + ".");
         break;
     }
     case FormKind::AddCarriage: {
@@ -901,6 +979,16 @@ void RailwayApp::submitForm() {
         saveAll();
         refresh();
         setNotice("Đã gán toa " + to_string(number) + " vào tàu " + code + ".");
+        break;
+    }
+    case FormKind::EditCarriage: {
+        if (!trains.updateCarriage(formTrain, formCarriageNo, trim(formValues[0]))) {
+            formError = "Loại toa không được để trống.";
+            return;
+        }
+        saveAll();
+        refresh();
+        setNotice("Đã cập nhật toa " + to_string(formCarriageNo) + ".");
         break;
     }
     case FormKind::AddStop: {
@@ -1009,6 +1097,16 @@ void RailwayApp::drawForm() {
         defs[3] = {"Số ray", "1 = ga xép"};
         fields = 4;
         break;
+    case FormKind::EditStation:
+        title = "Sửa thông tin ga";
+        subtitle = "Ga " + to_string(formStation);
+        submit = "Lưu thay đổi";
+        defs[0] = {"Tên ga", "VD: Tháp Chàm"};
+        defs[1] = {"Lý trình (km)", "VD: 1408"};
+        defs[2] = {"Số ray", "1 = ga xép"};
+        fields = 3;
+        height = 340.0f;
+        break;
     case FormKind::AddTrain:
         title = "Thêm đoàn tàu";
         subtitle = "Sau đó thêm toa và điểm dừng cho tàu";
@@ -1018,6 +1116,13 @@ void RailwayApp::drawForm() {
         hasChoiceA = hasChoiceB = true;
         height = 390.0f;
         break;
+    case FormKind::EditTrain:
+        title = "Sửa đoàn tàu " + formTrain;
+        subtitle = "Đổi hướng chạy hoặc cấp ưu tiên";
+        submit = "Lưu thay đổi";
+        hasChoiceA = hasChoiceB = true;
+        height = 330.0f;
+        break;
     case FormKind::AddCarriage:
         title = "Gán toa xe";
         submit = "Gán toa";
@@ -1025,6 +1130,14 @@ void RailwayApp::drawForm() {
         defs[1] = {"Số toa", "VD: 3"};
         defs[2] = {"Loại toa", "VD: GiuongNam"};
         fields = 3;
+        break;
+    case FormKind::EditCarriage:
+        title = "Sửa toa xe";
+        subtitle = "Tàu " + formTrain + " · Toa " + to_string(formCarriageNo);
+        submit = "Lưu loại toa";
+        defs[0] = {"Loại toa", "VD: NgoiMem hoặc GiuongNam"};
+        fields = 1;
+        height = 300.0f;
         break;
     case FormKind::AddStop:
         title = "Thêm điểm dừng";
@@ -1199,7 +1312,7 @@ void RailwayApp::drawForm() {
             ui.field(FIELD_BASE + i, cx, y + 20.0f, cw, 44.0f, formValues[i], disabled ? "" : defs[i].hint, FontRegular, 15.0f, disabled);
             if (wide || i % 2 == 1 || i == fields - 1) y += 78.0f;
         }
-        if (hasChoiceA && formKind == FormKind::AddTrain) {
+        if (hasChoiceA && (formKind == FormKind::AddTrain || formKind == FormKind::EditTrain)) {
             ui.text(bodyX, y + 2.0f, "Hướng chạy", FontSemi, 15.0f, Palette::Ink);
             const char* const labels[2] = {"Bắc → Nam", "Nam → Bắc"};
             for (int i = 0; i < 2; ++i) {
@@ -1232,7 +1345,18 @@ void RailwayApp::drawForm() {
     }
     float submitW = bodyW - 124.0f;
     float submitX = bodyX;
-    if (formKind == FormKind::EditStop) {
+    if (formKind == FormKind::EditCarriage) {
+        if (ui.button(9502, bodyX, buttonY, 140.0f, 48.0f, "Xóa toa", ButtonStyle::Danger)) {
+            confirmAction = ConfirmAction::RemoveCarriage;
+            confirmText = "Xóa toa " + to_string(formCarriageNo) + " của tàu " + formTrain + "?";
+            formKind = FormKind::Confirm;
+            formError.clear();
+            ui.clearFocus();
+            return;
+        }
+        submitX += 152.0f;
+        submitW -= 152.0f;
+    } else if (formKind == FormKind::EditStop) {
         if (ui.button(9502, bodyX, buttonY, 140.0f, 48.0f, "Bãi bỏ điểm dừng", ButtonStyle::Danger)) {
             confirmAction = ConfirmAction::RemoveStop;
             confirmText = "Bãi bỏ điểm dừng " + model.nameOf(formStation) + " của tàu " + formTrain + "?";

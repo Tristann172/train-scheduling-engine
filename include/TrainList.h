@@ -8,7 +8,7 @@
 class StationList;
 
 struct MaintenanceWindow {
-    int resourceType;
+    int resourceType; // 0 là ga, 1 là khu gian, 2 là ray trong ga
     int firstID;
     int secondID;
     int startMinute;

@@ -13,10 +13,13 @@ class StationList;
 enum class AppScreen { Stations, Trains, Maintenance, Map, Chart };
 
 enum class FormKind {
-    None, AddStation, AddTrain, AddCarriage, AddStop, EditStop, CloseResource, ReportDelay, Confirm
+    None, AddStation, EditStation, AddTrain, EditTrain, AddCarriage, EditCarriage,
+    AddStop, EditStop, CloseResource, ReportDelay, Confirm
 };
 
-enum class ConfirmAction { None, RemoveTrain, RemoveStop, ReopenWindow };
+enum class ConfirmAction {
+    None, RemoveStation, RemoveTrain, RemoveCarriage, RemoveStop, ReopenWindow
+};
 
 class RailwayApp {
 public:
@@ -33,6 +36,9 @@ public:
     void showScreen(AppScreen next) { screen = next; }
     void selectTrain(const std::string& code) { selectedTrain = code; }
     void openForm(FormKind kind);
+    void openEditStation(int stationID);
+    void openEditTrain(const std::string& code);
+    void openEditCarriage(const std::string& code, int carriageNo);
     void openEditStop(const std::string& code, int stationID);
 
 private:
@@ -66,6 +72,7 @@ private:
     int formDayA;
     int formDayB;
     int formStation;
+    int formCarriageNo;
     std::string formTrain;
     std::string formError;
     std::string confirmText;
@@ -78,7 +85,6 @@ private:
 
     void scanConflicts();
     void reloadData();
-    void applyCommands();
     bool changeMaintenance(bool opening, const std::string& resource, int first, int second,
                            int start, int end, std::string& error);
 

@@ -14,14 +14,8 @@ int main() {
     // 1. Nạp dữ liệu từ các tập tin .txt
     FileManager::loadStations("data/stations.txt", stationList);
     FileManager::loadTrains("data/trains.txt", trainList);
-    // Lệnh dữ liệu và khai báo bảo trì được áp dụng trước khi điều phối.
-    string commandLog;
-    if (FileManager::processInputCommands("data/commands.txt", stationList, trainList, commandLog)) {
-        cout << "--> Ket qua commands.txt:\n" << commandLog;
-    } else {
-        cout << "--> [Canh bao] " << commandLog << "\n";
-        trainList.resolveConflictAndScheduleSiding(&stationList);
-    }
+    // Dữ liệu bảo trì được lưu cùng trains.txt và thao tác trực tiếp trên GUI.
+    trainList.resolveConflictAndScheduleSiding(&stationList);
 
     // Lưu lịch trình sau khi đã giải quyết xung đột.
     FileManager::saveTrains("data/trains.txt", trainList);

@@ -4,7 +4,29 @@
 #include "StopScheduleNode.h"
 #include "LinkedList.h"
 
-struct Train {
+class Train {
+public:
+    Train(const std::string& code, int dir, int prio)
+        : trainCode(code), direction(dir),
+          priority(prio > 0 ? prio : inferPriorityFromCode(code)),
+          scheduleRevision(0) {}
+
+    void transferOperationalDataTo(Train& target) {
+        for (LinkedList<Carriage*>::Node* carriage = carriages.getHead();
+             carriage; carriage = carriage->next) {
+            target.carriages.pushBack(carriage->data);
+        }
+        carriages.clear();
+
+        for (LinkedList<StopSchedule*>::Node* stop = schedule.getHead();
+             stop; stop = stop->next) {
+            target.schedule.pushBack(stop->data);
+        }
+        schedule.clear();
+        target.scheduleRevision = scheduleRevision;
+    }
+
+public:
     std::string trainCode;
     int direction; // 1: Nam, 0: Bac
     int priority;  // 1: Tau khach nhanh SE, 2: Tau thuong TN, 3: Tau hang
@@ -12,19 +34,15 @@ struct Train {
     LinkedList<StopSchedule*> schedule;
     unsigned long scheduleRevision;
 
-public:
     static int inferPriorityFromCode(const std::string& code) {
         if (code.rfind("SE", 0) == 0) return 1; // Ưu tiên cao nhất: SE1, SE2, SE3, SE4...
         if (code.rfind("TN", 0) == 0) return 2; // Ưu tiên trung bình: TN1, TN2...
         return 3;                               // Ưu tiên thấp nhất: Tàu hàng (HH, GS...)
     }
 
-    Train(const std::string& code, int dir, int prio = -1)
-        : trainCode(code), direction(dir), 
-          priority(prio > 0 ? prio : inferPriorityFromCode(code)),
-          scheduleRevision(0) {}
+    static Train* createTrain(const std::string& code, int direction, int priority = -1);
 
-    ~Train() {
+    virtual ~Train() {
         LinkedList<Carriage*>::Node* carriage = carriages.getHead();
         while (carriage) {
             delete carriage->data;
@@ -35,6 +53,20 @@ public:
             delete stop->data;
             stop = stop->next;
         }
+    }
+
+    virtual int getDefaultPriority() const {
+        return inferPriorityFromCode(trainCode);
+    }
+
+    virtual std::string getTrainTypeName() const {
+        if (getDefaultPriority() == 1) return "Tàu khách nhanh (SE)";
+        if (getDefaultPriority() == 2) return "Tàu khách thường (TN)";
+        return "Tàu hàng";
+    }
+
+    void replaceOperationalDataFrom(Train& source) {
+        source.transferOperationalDataTo(*this);
     }
 
     // Getters
@@ -112,5 +144,39 @@ public:
         return nullptr;
     }
 };
+
+class ExpressTrain : public Train {
+public:
+    ExpressTrain(const std::string& code, int direction, int priority = 1)
+        : Train(code, direction, priority) {}
+
+    int getDefaultPriority() const override { return 1; }
+    std::string getTrainTypeName() const override { return "Tàu khách nhanh (SE)"; }
+};
+
+class PassengerTrain : public Train {
+public:
+    PassengerTrain(const std::string& code, int direction, int priority = 2)
+        : Train(code, direction, priority) {}
+
+    int getDefaultPriority() const override { return 2; }
+    std::string getTrainTypeName() const override { return "Tàu khách thường (TN)"; }
+};
+
+class FreightTrain : public Train {
+public:
+    FreightTrain(const std::string& code, int direction, int priority = 3)
+        : Train(code, direction, priority) {}
+
+    int getDefaultPriority() const override { return 3; }
+    std::string getTrainTypeName() const override { return "Tàu hàng"; }
+};
+
+inline Train* Train::createTrain(const std::string& code, int direction, int priority) {
+    const int resolvedPriority = priority > 0 ? priority : inferPriorityFromCode(code);
+    if (resolvedPriority == 1) return new ExpressTrain(code, direction, resolvedPriority);
+    if (resolvedPriority == 2) return new PassengerTrain(code, direction, resolvedPriority);
+    return new FreightTrain(code, direction, 3);
+}
 
 typedef Train TrainNode;

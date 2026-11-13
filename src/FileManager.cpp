@@ -296,7 +296,7 @@ bool FileManager::processInputCommands(const string& filename,
     }
 
     bool saved = true;
-    if (changedStations && !saveStations("stations.txt", stationList)) {
+    if (changedStations && !saveStations("data/stations.txt", stationList)) {
         resultLog += "Loi: khong ghi duoc stations.txt\n";
         saved = false;
     }
@@ -304,7 +304,7 @@ bool FileManager::processInputCommands(const string& filename,
         resultLog = "Khong co lenh nao trong commands.txt.";
     }
     trainList.resolveConflictAndScheduleSiding(&stationList);
-    if (!saveTrains("trains.txt", trainList)) {
+    if (!saveTrains("data/trains.txt", trainList)) {
         resultLog += "Loi: khong ghi duoc trains.txt\n";
         saved = false;
     }

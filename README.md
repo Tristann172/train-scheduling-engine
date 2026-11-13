@@ -27,23 +27,23 @@ là ngày kế tiếp lúc `01:00`. Mô phỏng chạy từ chuyến sớm nhấ
 trình, không quay vòng sau 1440 phút. Bảng lịch và đồng hồ hiển thị ngày dạng
 `D+1 01:00`.
 
-Có thể ghi lệnh trong `commands.txt`, mỗi lệnh một dòng, các trường phân cách bằng
+Có thể ghi lệnh trong `data/commands.txt`, mỗi lệnh một dòng, các trường phân cách bằng
 dấu `|`; dòng bắt đầu bằng `#` là chú thích. Chương trình áp dụng lệnh khi khởi
-động và có thể nạp lại từ mục `3.4` trên giao diện:
+động và có thể nạp lại bằng nút "Áp dụng commands.txt" trên màn Nhà ga:
 
 ```text
-#ADD_STATION|108|Dong Ha|640|3
-#UPDATE_STATION|108|Dong Ha|640|3
-#DELETE_STATION|108
+#ADD_STATION|119|Thap Cham|1408|3
+#UPDATE_STATION|119|Thap Cham|1408|3
+#DELETE_STATION|119
 #ADD_TRAIN|SE5|1|1
 #UPDATE_TRAIN|SE1|1|1
 #DELETE_TRAIN|SE5
 #ADD_CARRIAGE|SE1|3|GiuongNam
 #UPDATE_CARRIAGE|SE1|3|GiuongNam
 #DELETE_CARRIAGE|SE1|3
-#ADD_STOP|SE1|108|1500|1510|1
-#UPDATE_STOP|SE1|108|1500|1520|2
-#DELETE_STOP|SE1|108
+#ADD_STOP|SE1|119|1500|1510|1
+#UPDATE_STOP|SE1|119|1500|1520|2
+#DELETE_STOP|SE1|119
 CLOSE_STATION|104|500|560
 CLOSE_BLOCK|104|105|600|660
 CLOSE_TRACK|104|2|700|760
@@ -63,8 +63,54 @@ xử lý `commands.txt`. File lệnh không hỗ trợ thao tác tìm kiếm; tr
 vẫn có trên giao diện. Dòng toa trong `trains.txt` có dạng
 `CARRIAGE|số_toa|loại_toa`; trường sức chứa cũ (nếu có) được bỏ qua.
 
-Trên GUI, nhóm `[2]` có thao tác bãi bỏ chuyến, bãi bỏ điểm dừng và điều chỉnh
-lịch dừng; các thay đổi lịch đều được kiểm tra điều kiện và chạy lại điều phối.
-Nhóm `[3]` đóng/mở ga, ray hoặc khu gian theo đúng ID và khoảng phút đã khai
-báo, đồng thời đặt báo cáo trễ giờ. Tìm kiếm ở góc bảng lọc theo ID ga, mã tàu
-hoặc ID ga dừng. Mô phỏng tô đỏ tài nguyên đang bảo trì tại thời điểm mô phỏng.
+## Giao diện
+
+Thanh trên cùng có các màn sau, cửa sổ có thể phóng to tùy ý mà chữ vẫn sắc nét:
+
+- **Nhà ga**: bản đồ Việt Nam rút gọn, bảng ga có tìm theo ID, thêm ga, quét xung
+  đột, áp dụng `commands.txt` và nạp lại từ file.
+- **Tàu & lịch trình**: danh sách đoàn tàu, toa xe và bảng lịch dừng. Bấm một dòng
+  lịch để điều chỉnh giờ, đổi ray hoặc bãi bỏ điểm dừng trong cùng một biểu mẫu.
+- **Bảo trì & sự cố**: danh sách lịch bảo trì, đóng/mở ga, khu gian, ray và báo tàu
+  trễ. Thao tác đóng/mở được ghi thêm vào `commands.txt`.
+- **Bản đồ mô phỏng**: tàu chạy trên bản đồ theo thời gian, xem toàn quốc hoặc từng
+  miền, đoạn bảo trì có sọc đỏ vàng. Phím Space để chạy/dừng, mũi tên trái/phải để
+  tua 15 phút.
+- **Đồ thị**: tiến trình từng tàu so với lịch công bố và lý do tàu phải chờ.
+
+Giờ nhập theo dạng `09:20` hoặc `D+1 01:00`.
+
+## Dữ liệu
+
+- `data/stations.txt`, `data/trains.txt`, `data/commands.txt`: dữ liệu vận hành, chương trình tự
+  ghi lại `trains.txt` sau khi điều phối.
+- `data/timetable_base.txt`: lịch công bố để so sánh độ trễ, chương trình chỉ đọc. Giờ
+  SE1 đến SE4 lấy từ công cụ tra cứu của Đường sắt Việt Nam ngày 08/11/2026, ngày 0
+  là 10/11/2026.
+- Số ray trong `data/stations.txt` là số ước lượng từ OpenStreetMap, không phải số liệu
+  chính thức. Hai lịch bảo trì trong `data/commands.txt` là ví dụ minh họa.
+- `data/map_data.txt`: đường bờ biển và đường ray lấy từ Natural Earth, tọa độ ga đối
+  chiếu với OpenStreetMap. Ga mới được đặt lên tuyến theo lý trình.
+- `assets/fonts`: font Barlow và Arial (giấy phép SIL OFL của Barlow xem `OFL.txt`).
+
+## Biên dịch
+
+Cần SFML 3.1 và C++17. Cấu trúc thư mục chính gồm `src/` (mã nguồn), `include/`
+(header), `data/` (dữ liệu), `assets/` (font), `tools/` (công cụ) và `bin/` (DLL).
+Với MinGW, có thể biên dịch trực tiếp:
+
+```text
+g++ -std=c++17 src/main.cpp src/FileManager.cpp src/GraphicalSimulationEngine.cpp src/GuiMenu.cpp src/MapData.cpp src/StationList.cpp src/TrainList.cpp src/UiKit.cpp -Iinclude -IC:/SFML-3.1.0/include -LC:/SFML-3.1.0/lib -lsfml-graphics -lsfml-window -lsfml-system -o bin/TrainScheduling.exe
+```
+
+Hoặc dùng CMake 3.21+:
+
+```text
+cmake -S . -B build -DSFML_DIR=C:/SFML-3.1.0/lib/cmake/SFML
+cmake --build build
+```
+
+Chạy từ thư mục gốc của dự án để các đường dẫn dữ liệu và font được phân giải đúng.
+Với lệnh MinGW, chạy `.\bin\TrainScheduling.exe`; với CMake chạy
+`.\build\bin\TrainScheduling.exe`. CMake tự sao chép SFML DLL cạnh file chạy.
+Có thể đặt `SFML_DIR` trỏ tới thư mục cấu hình SFML của máy. Với MSVC cần bật `/utf-8`.
